@@ -1,5 +1,5 @@
-# Standalone Task Queue, intended to run alongside the existing Gateway.
-# Use external .env (not committed). Do not deploy over production before cutover.
+# Independent Task Queue Compose, staging only.
+# Build once: docker compose build; start only on a disposable state volume.
 services:
   tasks_mcp:
     build: .
@@ -9,28 +9,24 @@ services:
     environment:
       QUEUE_DB_PATH: /data/queue.sqlite3
       ALLOWED_GOOGLE_EMAIL: ${ALLOWED_GOOGLE_EMAIL:-}
-    volumes:
-      - ./state:/data
-    networks: [internal]
+    volumes: ["./state:/data"]
+    networks: [addons]
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
-
   tasks_tick:
     image: agent-switchboard-tasks:local
     restart: unless-stopped
     command: ["python", "-m", "task_queue.tick"]
     environment:
       QUEUE_DB_PATH: /data/queue.sqlite3
-    volumes:
-      - ./state:/data
-    networks: [internal]
+    volumes: ["./state:/data"]
+    networks: [addons]
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
-
   tasks_web:
     image: agent-switchboard-tasks:local
     restart: unless-stopped
@@ -41,16 +37,14 @@ services:
       QUEUE_WEB_PIN_PEPPER: ${QUEUE_WEB_PIN_PEPPER:?Required}
       QUEUE_WEB_SESSION_SECRET: ${QUEUE_WEB_SESSION_SECRET:?Required}
       QUEUE_WEB_SECURE_COOKIE: ${QUEUE_WEB_SECURE_COOKIE:-0}
-    volumes:
-      - ./state:/data
-    ports:
-      - "127.0.0.1:18769:8767"
-    networks: [internal]
+    volumes: ["./state:/data"]
+    ports: ["127.0.0.1:18769:8767"]
+    networks: [addons]
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
-
 networks:
-  internal:
-    driver: bridge
+  addons:
+    external: true
+    name: ${SWITCHBOARD_ADDONS_NETWORK:-switchboard_addons}
