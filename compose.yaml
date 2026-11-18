@@ -2,6 +2,7 @@
 # Build once: docker compose build; start only on a disposable state volume.
 services:
   tasks_mcp:
+    user: "${HOST_UID:?Set HOST_UID}:${HOST_GID:?Set HOST_GID}"
     build: .
     image: agent-switchboard-tasks:local
     restart: unless-stopped
@@ -16,6 +17,7 @@ services:
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
   tasks_tick:
+    user: "${HOST_UID:?Set HOST_UID}:${HOST_GID:?Set HOST_GID}"
     image: agent-switchboard-tasks:local
     restart: unless-stopped
     command: ["python", "-m", "task_queue.tick"]
@@ -28,6 +30,7 @@ services:
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
   tasks_web:
+    user: "${HOST_UID:?Set HOST_UID}:${HOST_GID:?Set HOST_GID}"
     image: agent-switchboard-tasks:local
     restart: unless-stopped
     command: ["python", "-m", "uvicorn", "task_queue.web:create_app", "--factory", "--host", "0.0.0.0", "--port", "8767"]
