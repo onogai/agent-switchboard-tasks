@@ -43,6 +43,9 @@ class IsolationTests(unittest.TestCase):
 
     def test_web_ui_assets_present(self):
         self.assertTrue(Path("/app/queue_ui/dist/index.html").is_file())
+        self.assertTrue(Path("/app/queue_ui/managed-dist/index.html").is_file())
+        self.assertFalse(Path("/app/queue_ui/admin-dist").exists(),
+                         "Gateway Admin UI must not be shipped by Queue")
 
 
 if __name__ == "__main__":
