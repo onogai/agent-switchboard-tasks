@@ -310,10 +310,13 @@ def set_auto_approval(enabled: bool, session_id: str, db_path: Path | None = Non
     with open_queue_db(db_path) as connection, transaction(connection):
         if fixed_now is None:
             now = datetime.now(timezone.utc)
-        current = connection.execute(
-            "SELECT auto_approve_until FROM queue_security WHERE id=1"
-        ).fetchone()[0]
-        if enabled and current and now < parse(current):
+        current_row = connection.execute(
+            "SELECT auto_approve_until,auto_approve_session_id "
+            "FROM queue_security WHERE id=1"
+        ).fetchone()
+        current = current_row["auto_approve_until"]
+        if enabled and current and now < parse(current) and (
+                current_row["auto_approve_session_id"] == session_id):
             return {"enabled": True, "until": current}
         until = stamp(now + timedelta(hours=1)) if enabled else None
         connection.execute(
