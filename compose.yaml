@@ -1,0 +1,56 @@
+# Standalone Task Queue, intended to run alongside the existing Gateway.
+# Use external .env (not committed). Do not deploy over production before cutover.
+services:
+  tasks_mcp:
+    build: .
+    image: agent-switchboard-tasks:local
+    restart: unless-stopped
+    command: ["python", "-m", "task_queue.mcp_server"]
+    environment:
+      QUEUE_DB_PATH: /data/queue.sqlite3
+      ALLOWED_GOOGLE_EMAIL: ${ALLOWED_GOOGLE_EMAIL:-}
+    volumes:
+      - ./state:/data
+    networks: [internal]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  tasks_tick:
+    image: agent-switchboard-tasks:local
+    restart: unless-stopped
+    command: ["python", "-m", "task_queue.tick"]
+    environment:
+      QUEUE_DB_PATH: /data/queue.sqlite3
+    volumes:
+      - ./state:/data
+    networks: [internal]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  tasks_web:
+    image: agent-switchboard-tasks:local
+    restart: unless-stopped
+    command: ["python", "-m", "uvicorn", "task_queue.web:create_app", "--factory", "--host", "0.0.0.0", "--port", "8767"]
+    environment:
+      QUEUE_DB_PATH: /data/queue.sqlite3
+      ADMIN_DB_PATH: /data/admin.sqlite3
+      QUEUE_WEB_PIN_PEPPER: ${QUEUE_WEB_PIN_PEPPER:?Required}
+      QUEUE_WEB_SESSION_SECRET: ${QUEUE_WEB_SESSION_SECRET:?Required}
+      QUEUE_WEB_SECURE_COOKIE: ${QUEUE_WEB_SECURE_COOKIE:-0}
+    volumes:
+      - ./state:/data
+    ports:
+      - "127.0.0.1:18769:8767"
+    networks: [internal]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+networks:
+  internal:
+    driver: bridge
