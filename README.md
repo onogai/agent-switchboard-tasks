@@ -1,42 +1,55 @@
-# Switchboard Tasks
+# Switchboard Task Queue
 
-Independent durable Task Queue service: scheduler, MCP HTTP endpoint and SQLite
-store. It works alone **or** as an optional Switchboard add-on.
+Independent durable Task Queue add-on, with 14 FastMCP tools, SQLite, an hourly
+scheduler, and a React management UI. This repository owns the Queue code and
+images; **Gateway Core and Manager do not contain Queue Python packages**.
 
-- **Standalone** (no `TASKS_ADMIN_TOKEN`): local PIN-protected `/queue` Web UI.
-  Configure `QUEUE_WEB_PIN_PEPPER` and `QUEUE_WEB_SESSION_SECRET`.
-- **Managed** (strong `TASKS_ADMIN_TOKEN` configured): private
-  `/internal/queue/api/*` management endpoints only. Switchboard Admin owns
-  the browser login, PIN, session and CSRF checks. No local PIN, cookie
-  or shared Gateway database is needed. Invalid manager credentials **never**
-  fall back to a standalone PIN.
+## Running modes
 
-MCP: `python -m task_queue.mcp_server` (port 8771).
-Scheduler: `python -m task_queue.tick`.
-Web: `uvicorn task_queue.web:create_app --factory --port 8767`.
+| Mode | Authentication | User interface |
+| --- | --- | --- |
+| Standalone | Queue's own PIN, session and CSRF | `/queue/` |
+| Switchboard-managed | Private service bearer + Manager PIN/session; no Queue-local PIN | `/admin/queue/` served through Manager |
 
-Run `bash scripts/test.sh` for disposable Docker verification. Keep the Queue
-SQLite state backed up, only run one scheduler against a given database, and
-never expose the MCP or managed Web ports publicly.
+The managed Queue provides a private `/internal/queue/api/*` management API
+and `/internal/queue/ui/*` assets. Manager authenticates the browser and
+proxies both routes; the browser never receives `TASKS_ADMIN_TOKEN`.
+Missing/invalid managed credentials fail closed, without standalone fallback.
 
-**Staging only:** do not deploy production cutover before M7 compatibility tests.
+The shared Queue application has three entrypoints:
 
-## M9: frontend ownership
+- MCP: `python -m task_queue.mcp_server` (HTTP port 8771)
+- Scheduler: `python -m task_queue.tick` (exactly one active instance per DB)
+- Web/API: `uvicorn task_queue.web:create_app --factory --port 8767`
 
-Task Queue owns its own React application in `queue_ui/`. Its image now
-contains two independently compiled bundles from that source:
+The image builds the standalone and managed React bundles from Queue-owned
+`queue_ui/` source. No Gateway Registry or Telegram UI is bundled.
 
-- `/queue/` — standalone web UI, local PIN authentication.
-- `/admin/queue/` — Manager-hosted UI, same central Switchboard session,
-  Queue JSON requests via `/admin/api/queue/*`.
+## Production
 
-In managed mode, only the private service-token-protected
-`/internal/queue/ui/*` asset endpoint is served. Switchboard Manager proxies
-its HTML/JS under `/admin/queue/*` after validating the browser's central
-PIN session. The Queue service never receives the central PIN and the browser
-never sees `TASKS_ADMIN_TOKEN`. No Gateway/Telegram React code is bundled in
-Task Queue's frontend.
+The modular production cutover completed on **18 November 2026**.
+Gateway Core and Manager are deployed from `onogai/agent-switchboard`;
+Task Queue uses its own image and SQLite state, presently under
+`/home/onogai/agent-switchboard-tasks/state/queue.sqlite3`.
+The Core repository owns production orchestration; **do not run this
+repository's standalone Compose against that production project**.
 
-Run `bash scripts/test.sh` for standalone and managed smoke tests. Use the
-matching Manager M9 integration gate to verify browser asset delivery across
-separate Docker images.
+The production-compatible Queue source comes from the consolidated M7–M9
+managed architecture in this repository. Existing deployments must retain
+their current state directory, service token, PIN epoch authority, registry
+contracts/grants and image references. A Git merge does **not** trigger a
+container rebuild, SQLite migration or scheduler restart.
+
+See [INSTALL.md](INSTALL.md) for setup and deployment boundaries, and
+[MANAGED_AUTH.md](MANAGED_AUTH.md) for the managed security contract.
+
+## Testing
+
+`bash scripts/test.sh` builds a disposable Docker image and runs the Queue
+unit/security tests without mounting live databases or secrets.
+The CI workflow runs the same test. Managed browser-to-Manager integration is
+also tested in the separately owned Core repository.
+
+Preserve consistent SQLite/WAL backups; never run competing schedulers on
+the same database, and never publish the MCP or managed Web ports to the
+public Internet.
