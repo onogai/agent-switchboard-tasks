@@ -237,8 +237,10 @@ def submit_proposal(operation: str, payload: dict, target_id: str | None,
             "SELECT auto_approve_until,auto_approve_session_id FROM queue_security WHERE id=1"
         ).fetchone()
         if security["auto_approve_until"] and now < parse(security["auto_approve_until"]):
-            return _decide(connection, row, True, "auto",
-                           security["auto_approve_session_id"], now)
+            from .managed_approval import auto_approval_authorized
+            if auto_approval_authorized(security["auto_approve_session_id"]):
+                return _decide(connection, row, True, "auto",
+                               security["auto_approve_session_id"], now)
         return _view(connection, row)
 
 
@@ -287,7 +289,12 @@ def auto_approval_state(db_path: Path | None = None,
     with open_queue_db(db_path) as connection:
         row = connection.execute("SELECT auto_approve_until FROM queue_security WHERE id=1").fetchone()
         until = row[0]
-        return {"enabled": bool(until and now < parse(until)), "until": until}
+        from .managed_approval import auto_approval_authorized
+        session = connection.execute(
+            "SELECT auto_approve_session_id FROM queue_security WHERE id=1"
+        ).fetchone()[0]
+        enabled = bool(until and now < parse(until) and auto_approval_authorized(session))
+        return {"enabled": enabled, "until": until if enabled else None}
 
 
 def set_auto_approval(enabled: bool, session_id: str, db_path: Path | None = None,
@@ -296,6 +303,10 @@ def set_auto_approval(enabled: bool, session_id: str, db_path: Path | None = Non
     now = utc(now or datetime.now(timezone.utc))
     if not session_id or type(enabled) is not bool:
         raise QueueAdminError("Authenticated session and boolean enabled are required.")
+    if enabled:
+        from .managed_approval import auto_approval_authorized
+        if not auto_approval_authorized(session_id):
+            raise QueueAdminError("Auto-approval authority is unavailable or session revoked.")
     with open_queue_db(db_path) as connection, transaction(connection):
         if fixed_now is None:
             now = datetime.now(timezone.utc)
