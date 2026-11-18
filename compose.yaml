@@ -37,8 +37,8 @@ services:
     environment:
       QUEUE_DB_PATH: /data/queue.sqlite3
       ADMIN_DB_PATH: /data/admin.sqlite3
-      QUEUE_WEB_PIN_PEPPER: ${QUEUE_WEB_PIN_PEPPER:?Required}
-      QUEUE_WEB_SESSION_SECRET: ${QUEUE_WEB_SESSION_SECRET:?Required}
+      QUEUE_WEB_PIN_PEPPER: ${QUEUE_WEB_PIN_PEPPER:-}
+      QUEUE_WEB_SESSION_SECRET: ${QUEUE_WEB_SESSION_SECRET:-}
       QUEUE_WEB_SECURE_COOKIE: ${QUEUE_WEB_SECURE_COOKIE:-0}
       TASKS_ADMIN_TOKEN: ${TASKS_ADMIN_TOKEN:-}
     volumes: ["./state:/data"]
