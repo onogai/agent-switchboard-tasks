@@ -43,7 +43,7 @@ class ManagedAdminAuthTests(unittest.TestCase):
         self.assertEqual(self.client.get(path, headers=self.managed_headers()).status_code, 200)
         # A managed service token never authorizes the standalone browser route.
         self.assertEqual(self.client.get("/queue/api/overview",
-                                         headers=self.managed_headers()).status_code, 401)
+                                         headers=self.managed_headers()).status_code, 404)
 
     def test_managed_json_mutation_uses_service_auth_not_browser_csrf(self):
         url = "/internal/queue/api/definitions"
@@ -55,7 +55,7 @@ class ManagedAdminAuthTests(unittest.TestCase):
         self.assertEqual(list_definitions(self.db)[0]["title"], payload["title"])
         # Browser CSRF requirement is unchanged for standalone endpoints.
         browser = self.client.post("/queue/api/definitions", json=payload)
-        self.assertEqual(browser.status_code, 401)
+        self.assertEqual(browser.status_code, 404)
 
     def test_proposals_and_auto_approval_use_managed_session_identity(self):
         response = self.client.post("/internal/queue/api/auto-approval",
@@ -68,16 +68,29 @@ class ManagedAdminAuthTests(unittest.TestCase):
         self.assertTrue(status.json()["enabled"])
 
     def test_standalone_pin_still_works_without_manager_credentials(self):
-        self.assertEqual(self.client.get("/queue/api/overview").status_code, 401)
-        csrf = self.client.get("/queue/api/session").json()["csrf_token"]
-        login = self.client.post("/queue/api/login", json={"pin": "123456"},
-                                 headers={"X-CSRF-Token": csrf})
-        self.assertEqual(login.status_code, 200, login.text)
-        self.assertEqual(self.client.get("/queue/api/overview").status_code, 200)
-        # Even with a valid standalone cookie, managed endpoints demand a token.
-        self.assertEqual(self.client.get("/internal/queue/api/overview").status_code, 401)
-        self.assertEqual(self.client.get("/internal/queue/api/overview",
-                          headers=self.managed_headers("bad")).status_code, 401)
+        standalone_config = WebConfig(
+            db_path=self.db, session_secret="s" * 40, pin_pepper=self.PEPPER)
+        with TestClient(create_app(standalone_config)) as standalone:
+            self.assertEqual(standalone.get("/queue/api/overview").status_code, 401)
+            csrf = standalone.get("/queue/api/session").json()["csrf_token"]
+            login = standalone.post("/queue/api/login", json={"pin": "123456"},
+                                    headers={"X-CSRF-Token": csrf})
+            self.assertEqual(login.status_code, 200, login.text)
+            self.assertEqual(standalone.get("/queue/api/overview").status_code, 200)
+            # Standalone never accepts manager credentials.
+            self.assertEqual(standalone.get("/internal/queue/api/overview",
+                              headers=self.managed_headers()).status_code, 404)
+        # The managed app never exposes a standalone login, even if a PIN exists.
+        self.assertEqual(self.client.get("/queue/api/session").status_code, 404)
+        self.assertEqual(self.client.post("/queue/api/login",
+                         json={"pin": "123456"}).status_code, 404)
+
+    def test_managed_mode_needs_no_local_pin_or_session_keys(self):
+        app = create_app(WebConfig(db_path=self.db, managed_admin_token=self.TOKEN))
+        with TestClient(app) as client:
+            self.assertEqual(client.get("/internal/queue/api/overview",
+                             headers=self.managed_headers()).status_code, 200)
+            self.assertEqual(client.get("/queue/api/login").status_code, 404)
 
     def test_no_managed_endpoint_without_explicit_token(self):
         config = WebConfig(db_path=self.db, session_secret="s" * 40,
