@@ -8,6 +8,9 @@ The manager checks its own browser session and CSRF before proxying requests.
 from __future__ import annotations
 
 import re
+from pathlib import Path
+
+from starlette.responses import FileResponse
 from hmac import compare_digest
 
 from starlette.routing import Route
@@ -19,7 +22,7 @@ MANAGED_BASE = "/internal/queue/api"
 _SESSION_ID = re.compile(r"[A-Za-z0-9_-]{20,128}\Z")
 
 
-def routes_for_management(queue_routes: list[Route], token: str) -> list[Route]:
+def routes_for_management(queue_routes: list[Route], token: str, static_dir: Path) -> list[Route]:
     """Reuse business handlers, not browser auth or a shared Gateway database."""
     result = []
     for route in queue_routes:
@@ -47,4 +50,32 @@ def routes_for_management(queue_routes: list[Route], token: str) -> list[Route]:
 
         result.append(Route(MANAGED_BASE + "/" + suffix, managed_handler,
                             methods=route.methods))
+    async def managed_ui(request):
+        # Queue UI is an add-on-owned asset, served only to the Manager proxy.
+        # The browser never receives the private service token.
+        authorization = request.headers.get("authorization", "")
+        session_id = request.headers.get("x-switchboard-session-id", "")
+        if not compare_digest(authorization, "Bearer " + token) or not _SESSION_ID.fullmatch(session_id):
+            return reply({"error": "Manager authentication required."}, 401)
+        tail = request.path_params.get("tail", "")
+        if tail.startswith("assets/"):
+            filename = tail.removeprefix("assets/")
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,200}", filename) or filename.startswith("."):
+                return reply({"error": "Asset not found."}, 404)
+            path = static_dir / "assets" / filename
+            if not path.is_file():
+                return reply({"error": "Asset not found."}, 404)
+            return FileResponse(path, headers={"Cache-Control": "public, max-age=3600"})
+        # SPA fallback only for reasonable routes: never serve hidden or path traversal files.
+        if tail and (not re.fullmatch(r"[A-Za-z0-9_./-]{1,512}", tail) or
+                     any(p in {".", "..", ""} for p in tail.split("/"))):
+            return reply({"error": "UI route not found."}, 404)
+        index = static_dir / "index.html"
+        if not index.is_file():
+            return reply({"error": "Queue UI build missing."}, 503)
+        return FileResponse(index, media_type="text/html",
+                            headers={"Cache-Control": "no-store"})
+
+    result.append(Route("/internal/queue/ui", managed_ui, methods=["GET"]))
+    result.append(Route("/internal/queue/ui/{tail:path}", managed_ui, methods=["GET"]))
     return result
