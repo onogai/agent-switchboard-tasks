@@ -36,6 +36,7 @@ class WebConfig:
     db_path: Path | None = None
     session_secret: str | None = None
     static_dir: Path = Path(__file__).parent.parent / "queue_ui" / "dist"
+    managed_static_dir: Path = Path(__file__).parent.parent / "queue_ui" / "managed-dist"
     pin_pepper: str | None = None
     secure_cookie: bool = False
     managed_admin_token: str | None = None
@@ -419,7 +420,8 @@ def create_app(config: WebConfig | None = None) -> Starlette:
         # Managed is exclusive: no browser PIN endpoints and no automatic
         # fallback if the Switchboard token is missing or incorrect.
         from .managed_api import routes_for_management
-        app = Starlette(routes=routes_for_management(routes, config.managed_admin_token))
+        app = Starlette(routes=routes_for_management(
+            routes, config.managed_admin_token, config.managed_static_dir))
         app.state.config = config
         return app
     assets = config.static_dir / "assets"
