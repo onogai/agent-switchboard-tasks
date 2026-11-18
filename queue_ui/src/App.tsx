@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link as RouterLink, NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Link as RouterLink, NavLink, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import {
   Alert, AppBar, Box, Button, Card, CardContent, Chip, CircularProgress, Container,
   Dialog, DialogActions, DialogContent, DialogTitle, Divider, Drawer, FormControl,
   FormHelperText, IconButton, InputLabel, MenuItem, Paper, Select, Slider, Stack,
-  Tab, Tabs, TextField, Toolbar, Tooltip, Typography, useMediaQuery, useTheme,
+  TextField, Toolbar, Tooltip, Typography, useMediaQuery, useTheme,
 } from '@mui/material'
 import {
   AddRounded, ArrowBackRounded, AssignmentRounded, DashboardRounded,
@@ -14,12 +14,10 @@ import {
   RuleRounded,
 } from '@mui/icons-material'
 import { api, clearCsrf } from './api'
-import { adminApi, clearAdminCsrf, type AdminSession } from './adminApi'
-import { GatewayPage, SecurityPage, TelegramPage } from './AdminPages'
 import type { Definition, DefinitionInput, Instance, MissPolicy, Proposal, ScheduleKind, Status } from './types'
 
 const statuses: Status[] = ['future', 'ready', 'leased', 'succeeded', 'failed', 'skipped', 'merged', 'cancelled']
-const legacyQueue = window.location.pathname.startsWith('/queue')
+const managedQueue = window.location.pathname.startsWith('/admin/queue')
 const statusLabel: Record<Status, string> = {
   future: 'Майбутня', ready: 'Готова', leased: 'Виконується', succeeded: 'Виконана',
   failed: 'Помилка', skipped: 'Пропущена', merged: 'Об’єднана', cancelled: 'Скасована',
@@ -80,7 +78,7 @@ function Shell() {
   const content = <Box sx={{ p: 2.5, height: '100%' }}>
     <Box sx={{ px: 1, pb: 3 }}><Typography variant="overline" color="primary" fontWeight={800} letterSpacing={2}>NOGAI</Typography><Typography variant="h6" fontWeight={750}>Менеджер задач</Typography><Typography variant="body2" color="text.secondary">Локальна черга агента</Typography></Box>
     <Stack gap={.5}>{nav.map(item => <Box key={item.to} component={NavLink} end={item.to === '/'} to={item.to} onClick={() => setMobileOpen(false)} sx={{ textDecoration: 'none', color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1.5, px: 2, py: 1.3, borderRadius: 2, '&.active': { bgcolor: '#e9f0fb', color: 'primary.main', fontWeight: 700 }, '&:hover': { bgcolor: '#f0f4fa' } }}>{item.icon}{item.text}</Box>)}</Stack>
-    <Divider sx={{ my: 3 }} /><Button sx={{ mx: 1 }} onClick={async () => { await api.logout(); clearCsrf(); queryClient.clear(); window.location.assign('/queue/') }}>Вийти</Button><Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>Доступно в локальній мережі</Typography>
+    <Divider sx={{ my: 3 }} />{managedQueue ? <Button sx={{ mx: 1 }} href="/admin/">Назад до Switchboard</Button> : <Button sx={{ mx: 1 }} onClick={async () => { await api.logout(); clearCsrf(); queryClient.clear(); window.location.assign('/queue/') }}>Вийти</Button>}<Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>{managedQueue ? 'Захищено сесією Switchboard' : 'Доступно в локальній мережі'}</Typography>
   </Box>
   return <Box sx={{ display: 'flex', minHeight: '100vh' }}>
     {mobile ? <><AppBar position="fixed" color="inherit" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}><Toolbar><IconButton onClick={() => setMobileOpen(true)} aria-label="Відкрити меню"><MenuRounded /></IconButton><Typography fontWeight={700} sx={{ ml: 1 }}>Менеджер задач</Typography></Toolbar></AppBar><Drawer open={mobileOpen} onClose={() => setMobileOpen(false)} PaperProps={{ sx: { width: 250 } }}>{content}</Drawer></> : <Drawer variant="permanent" PaperProps={{ sx: { width: 250, borderRight: 1, borderColor: 'divider' } }}>{content}</Drawer>}
@@ -292,52 +290,39 @@ function ProposalsPage() {
 
 function AuthGate() {
   const client = useQueryClient()
-  const session = useQuery({ queryKey: ['session', legacyQueue ? 'legacy' : 'admin'], queryFn: legacyQueue ? api.session : adminApi.session, refetchInterval: 30_000 })
+  const session = useQuery({
+    queryKey: ['queue-auth', managedQueue ? 'managed' : 'standalone'],
+    queryFn: managedQueue
+      ? async () => {
+          const response = await fetch('/admin/api/session', { credentials: 'same-origin', cache: 'no-store' })
+          if (!response.ok) throw new Error('Manager session unavailable')
+          return response.json() as Promise<{ authenticated: boolean; csrf_token: string }>
+        }
+      : api.session,
+    refetchInterval: 30_000,
+  })
   const [pin, setPin] = useState('')
-  const login = useMutation({ mutationFn: () => legacyQueue ? api.login(pin) : adminApi.login(pin), onSuccess: () => { clearCsrf(); clearAdminCsrf(); setPin(''); client.invalidateQueries() } })
-  if (session.isLoading) return <Loading />
+  const login = useMutation({
+    mutationFn: () => api.login(pin),
+    onSuccess: () => { clearCsrf(); setPin(''); client.invalidateQueries() },
+  })
+  useEffect(() => {
+    if (managedQueue && session.data && !session.data.authenticated) window.location.assign('/admin/')
+  }, [session.data])
+  if (session.isLoading || (managedQueue && session.data && !session.data.authenticated)) return <Loading />
   if (session.error) return <ErrorBox error={session.error} />
-  if (session.data?.authenticated) return legacyQueue ? <Shell /> : <InfrastructureShell modules={(session.data as AdminSession).modules} />
-  return <Container maxWidth="xs" sx={{ pt: 12 }}><Card><CardContent sx={{ p: 4 }}><Typography variant="h5" fontWeight={700} gutterBottom>{legacyQueue ? 'Вхід до черги задач' : 'Infrastructure Admin'}</Typography><Typography color="text.secondary" sx={{ mb: 3 }}>Уведіть шість цифр PIN.</Typography><Box component="form" onSubmit={e => { e.preventDefault(); login.mutate() }}><TextField label="PIN" type="password" value={pin} onChange={e => setPin(e.target.value)} inputProps={{ maxLength: 6, inputMode: 'numeric', pattern: '[0-9]{6}' }} fullWidth required autoFocus /><Button type="submit" variant="contained" fullWidth sx={{ mt: 2 }} disabled={login.isPending || !/^[0-9]{6}$/.test(pin)}>Увійти</Button></Box>{login.error && <Alert severity="error" sx={{ mt: 2 }}>{(login.error as Error).message}</Alert>}</CardContent></Card></Container>
-}
-
-function InfrastructureShell({ modules }: { modules: AdminSession['modules'] }) {
-  const location = useLocation()
-  const client = useQueryClient()
-  const queueSection = ['/queue', '/rules', '/tasks', '/proposals'].some(path => location.pathname === path || location.pathname.startsWith(path + '/'))
-  const tab = queueSection ? '/queue' : location.pathname.startsWith('/telegram') ? '/telegram' : location.pathname.startsWith('/security') ? '/security' : '/gateway'
-  const logout = async () => {
-    await adminApi.logout(); clearAdminCsrf(); clearCsrf(); client.clear(); window.location.assign('/admin/')
-  }
-  return <Box sx={{ minHeight: '100vh' }}>
-    <AppBar position="sticky" color="inherit" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}>
-      <Toolbar sx={{ gap: 2 }}><Typography variant="h6" fontWeight={750} sx={{ flexGrow: 1 }}>Infrastructure Admin</Typography><Button onClick={logout}>Вийти</Button></Toolbar>
-      <Tabs value={tab} variant="scrollable" scrollButtons="auto" sx={{ px: { xs: 1, md: 3 } }}>
-        <Tab label="Безпека" value="/security" component={RouterLink} to="/security" />
-        <Tab label="Gateway" value="/gateway" component={RouterLink} to="/gateway" />
-        {modules.queue && <Tab label="Черга" value="/queue" component={RouterLink} to="/queue" />}
-        {modules.telegram && <Tab label="Telegram" value="/telegram" component={RouterLink} to="/telegram" />}
-      </Tabs>
-    </AppBar>
-    <Container maxWidth="xl" sx={{ py: 4 }}>
-      {modules.queue && queueSection && <Tabs value={location.pathname.startsWith('/rules') ? '/rules' : location.pathname.startsWith('/proposals') ? '/proposals' : '/queue'} variant="scrollable" scrollButtons="auto" sx={{ mb: 3, borderBottom: 1, borderColor: 'divider' }}><Tab label="Огляд" value="/queue" component={RouterLink} to="/queue" /><Tab label="Правила" value="/rules" component={RouterLink} to="/rules" /><Tab label="Пропозиції" value="/proposals" component={RouterLink} to="/proposals" /></Tabs>}
-      <Routes>
-        <Route path="/" element={<Navigate to="/gateway" replace />} />
-        <Route path="/security" element={<SecurityPage />} />
-        <Route path="/gateway" element={<GatewayPage />} />
-        {modules.queue && <>
-          <Route path="/queue" element={<><AutoApprovalBanner /><DashboardPage /></>} />
-          <Route path="/tasks/:id" element={<><AutoApprovalBanner /><TaskPage /></>} />
-          <Route path="/rules" element={<><AutoApprovalBanner /><RulesPage /></>} />
-          <Route path="/rules/new" element={<><AutoApprovalBanner /><RuleFormPage /></>} />
-          <Route path="/rules/:id" element={<><AutoApprovalBanner /><RuleFormPage /></>} />
-          <Route path="/proposals" element={<><AutoApprovalBanner /><ProposalsPage /></>} />
-        </>}
-        {modules.telegram && <Route path="/telegram" element={<TelegramPage />} />}
-        <Route path="*" element={<Empty text="Сторінку не знайдено." />} />
-      </Routes>
-    </Container>
-  </Box>
+  if (session.data?.authenticated) return <Shell />
+  return <Container maxWidth="xs" sx={{ pt: 12 }}><Card><CardContent sx={{ p: 4 }}>
+    <Typography variant="h5" fontWeight={700} gutterBottom>Вхід до черги задач</Typography>
+    <Typography color="text.secondary" sx={{ mb: 3 }}>Уведіть шість цифр PIN.</Typography>
+    <Box component="form" onSubmit={event => { event.preventDefault(); login.mutate() }}>
+      <TextField label="PIN" type="password" value={pin} onChange={event => setPin(event.target.value)}
+        inputProps={{ maxLength: 6, inputMode: 'numeric', pattern: '[0-9]{6}' }} fullWidth required autoFocus />
+      <Button type="submit" variant="contained" fullWidth sx={{ mt: 2 }}
+        disabled={login.isPending || !/^[0-9]{6}$/.test(pin)}>Увійти</Button>
+    </Box>
+    {login.error && <Alert severity="error" sx={{ mt: 2 }}>{login.error.message}</Alert>}
+  </CardContent></Card></Container>
 }
 
 export default function App() { return <AuthGate /> }
