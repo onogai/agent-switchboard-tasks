@@ -38,6 +38,11 @@ def routes_for_management(queue_routes: list[Route], token: str) -> list[Route]:
                 return reply({"error": "Managed browser session required."}, 401)
             # Only the authenticated internal route is permitted to set this flag.
             request.scope["_managed_admin_session_id"] = session_id
+            epoch = request.headers.get("x-switchboard-pin-version", "")
+            if epoch and epoch.isascii() and epoch.isdecimal() and len(epoch) <= 12:
+                version = int(epoch)
+                if version > 0:
+                    request.scope["_managed_admin_pin_version"] = version
             return await endpoint(request)
 
         result.append(Route(MANAGED_BASE + "/" + suffix, managed_handler,
