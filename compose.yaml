@@ -10,6 +10,8 @@ services:
     environment:
       QUEUE_DB_PATH: /data/queue.sqlite3
       ALLOWED_GOOGLE_EMAIL: ${ALLOWED_GOOGLE_EMAIL:-}
+      TASKS_ADMIN_TOKEN: ${TASKS_ADMIN_TOKEN:-}
+      TASKS_AUTHORITY_URL: ${TASKS_AUTHORITY_URL:-}
     volumes: ["./state:/data"]
     networks: [addons]
     read_only: true
@@ -41,6 +43,7 @@ services:
       QUEUE_WEB_SESSION_SECRET: ${QUEUE_WEB_SESSION_SECRET:-}
       QUEUE_WEB_SECURE_COOKIE: ${QUEUE_WEB_SECURE_COOKIE:-0}
       TASKS_ADMIN_TOKEN: ${TASKS_ADMIN_TOKEN:-}
+      TASKS_AUTHORITY_URL: ${TASKS_AUTHORITY_URL:-}
     volumes: ["./state:/data"]
     ports: ["127.0.0.1:18769:8767"]
     networks: [addons]
