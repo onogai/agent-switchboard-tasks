@@ -359,8 +359,15 @@ async def auto_approval(request: Request) -> Response:
         return reply(await asyncio.to_thread(auto_approval_state,
                                              request.app.state.config.db_path))
     async def run(data):
+        session_id = admin_session_id(request)
+        if request.scope.get("_managed_admin_session_id"):
+            from .managed_approval import managed_session
+            version = request.scope.get("_managed_admin_pin_version")
+            if type(version) is not int or version < 1:
+                raise QueueAdminError("Central Manager PIN epoch is required.")
+            session_id = managed_session(session_id, version)
         return await asyncio.to_thread(set_auto_approval, data.get("enabled"),
-                                       admin_session_id(request),
+                                       session_id,
                                        request.app.state.config.db_path)
     return await mutation(request, run)
 
