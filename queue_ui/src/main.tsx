@@ -29,7 +29,7 @@ createRoot(document.getElementById('root')!).render(
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter basename={window.location.pathname.startsWith('/queue') ? '/queue' : '/admin'}><App /></BrowserRouter>
+        <BrowserRouter basename={window.location.pathname.startsWith('/admin/queue') ? '/admin/queue' : '/queue'}><App /></BrowserRouter>
       </QueryClientProvider>
     </ThemeProvider>
   </React.StrictMode>,

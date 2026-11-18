@@ -9,3 +9,4 @@ state/
 queue_ui/node_modules/
 queue_ui/dist/
 queue_ui/admin-dist/
+queue_ui/managed-dist/

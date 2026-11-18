@@ -10,6 +10,8 @@ services:
     environment:
       QUEUE_DB_PATH: /data/queue.sqlite3
       ALLOWED_GOOGLE_EMAIL: ${ALLOWED_GOOGLE_EMAIL:-}
+      TASKS_ADMIN_TOKEN: ${TASKS_ADMIN_TOKEN:-}
+      TASKS_AUTHORITY_URL: ${TASKS_AUTHORITY_URL:-}
     volumes: ["./state:/data"]
     networks: [addons]
     read_only: true
@@ -23,6 +25,8 @@ services:
     command: ["python", "-m", "task_queue.tick"]
     environment:
       QUEUE_DB_PATH: /data/queue.sqlite3
+      TASKS_ADMIN_TOKEN: ${TASKS_ADMIN_TOKEN:-}
+      TASKS_AUTHORITY_URL: ${TASKS_AUTHORITY_URL:-}
     volumes: ["./state:/data"]
     networks: [addons]
     read_only: true
@@ -36,10 +40,11 @@ services:
     command: ["python", "-m", "uvicorn", "task_queue.web:create_app", "--factory", "--host", "0.0.0.0", "--port", "8767"]
     environment:
       QUEUE_DB_PATH: /data/queue.sqlite3
-      ADMIN_DB_PATH: /data/admin.sqlite3
-      QUEUE_WEB_PIN_PEPPER: ${QUEUE_WEB_PIN_PEPPER:?Required}
-      QUEUE_WEB_SESSION_SECRET: ${QUEUE_WEB_SESSION_SECRET:?Required}
+      QUEUE_WEB_PIN_PEPPER: ${QUEUE_WEB_PIN_PEPPER:-}
+      QUEUE_WEB_SESSION_SECRET: ${QUEUE_WEB_SESSION_SECRET:-}
       QUEUE_WEB_SECURE_COOKIE: ${QUEUE_WEB_SECURE_COOKIE:-0}
+      TASKS_ADMIN_TOKEN: ${TASKS_ADMIN_TOKEN:-}
+      TASKS_AUTHORITY_URL: ${TASKS_AUTHORITY_URL:-}
     volumes: ["./state:/data"]
     ports: ["127.0.0.1:18769:8767"]
     networks: [addons]

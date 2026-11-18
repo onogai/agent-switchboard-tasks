@@ -4,9 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "tsc -b && vite build && vite build --config vite.admin.config.ts",
-    "dev": "vite --host 0.0.0.0",
-    "test:matrix": "node --experimental-strip-types --test src/gatewayMatrixModel.test.mjs"
+    "build": "tsc -b && vite build && vite build --config vite.managed.config.ts",
+    "dev": "vite --host 0.0.0.0"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

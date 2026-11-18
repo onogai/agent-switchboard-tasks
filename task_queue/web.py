@@ -36,8 +36,10 @@ class WebConfig:
     db_path: Path | None = None
     session_secret: str | None = None
     static_dir: Path = Path(__file__).parent.parent / "queue_ui" / "dist"
+    managed_static_dir: Path = Path(__file__).parent.parent / "queue_ui" / "managed-dist"
     pin_pepper: str | None = None
     secure_cookie: bool = False
+    managed_admin_token: str | None = None
 
     @classmethod
     def from_env(cls) -> WebConfig:
@@ -45,7 +47,8 @@ class WebConfig:
         return cls(Path(path) if path else None,
                    os.environ.get("QUEUE_WEB_SESSION_SECRET") or None,
                    pin_pepper=os.environ.get("QUEUE_WEB_PIN_PEPPER") or None,
-                   secure_cookie=os.environ.get("QUEUE_WEB_SECURE_COOKIE") == "1")
+                   secure_cookie=os.environ.get("QUEUE_WEB_SECURE_COOKIE") == "1",
+                   managed_admin_token=os.environ.get("TASKS_ADMIN_TOKEN") or None)
 
 
 def reply(data: object, status: int = 200) -> JSONResponse:
@@ -59,12 +62,15 @@ def csrf_token(request: Request) -> str:
 
 
 async def json_body(request: Request) -> dict:
-    origin = request.headers.get("origin")
-    if origin and urlsplit(origin).netloc != request.url.netloc:
-        raise QueueAdminError("Invalid request origin.")
-    token = request.headers.get("x-csrf-token", "")
-    if not token or not compare_digest(csrf_token(request), token):
-        raise QueueAdminError("Invalid CSRF token. Reload the page and try again.")
+    # Private managed requests already passed service-token authentication.
+    # Browser requests must independently pass same-origin and CSRF checks.
+    if not request.scope.get("_managed_admin_session_id"):
+        origin = request.headers.get("origin")
+        if origin and urlsplit(origin).netloc != request.url.netloc:
+            raise QueueAdminError("Invalid request origin.")
+        token = request.headers.get("x-csrf-token", "")
+        if not token or not compare_digest(csrf_token(request), token):
+            raise QueueAdminError("Invalid CSRF token. Reload the page and try again.")
     if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
         raise QueueAdminError("Expected a JSON request.")
     raw = await request.body()
@@ -141,6 +147,8 @@ async def session(request: Request) -> Response:
 
 
 async def authenticated(request: Request) -> bool:
+    if request.scope.get("_managed_admin_session_id"):
+        return True
     version = request.session.get("pin_version")
     if not request.session.get("session_id") or not version:
         return False
@@ -332,11 +340,16 @@ async def proposal(request: Request) -> Response:
         return reply({"error": "Proposal not found."}, 404)
 
 
+def admin_session_id(request: Request) -> str:
+    """Keep per-browser approval binding in both auth modes."""
+    return request.scope.get("_managed_admin_session_id") or request.session["session_id"]
+
+
 async def proposal_decision(request: Request) -> Response:
     async def run(_data):
         return await asyncio.to_thread(
             decide_proposal, request.path_params["proposal_id"],
-            request.url.path.endswith("/approve"), request.session["session_id"],
+            request.url.path.endswith("/approve"), admin_session_id(request),
             request.app.state.config.db_path,
         )
     return await mutation(request, run)
@@ -347,8 +360,15 @@ async def auto_approval(request: Request) -> Response:
         return reply(await asyncio.to_thread(auto_approval_state,
                                              request.app.state.config.db_path))
     async def run(data):
+        session_id = admin_session_id(request)
+        if request.scope.get("_managed_admin_session_id"):
+            from .managed_approval import managed_session
+            version = request.scope.get("_managed_admin_pin_version")
+            if type(version) is not int or version < 1:
+                raise QueueAdminError("Central Manager PIN epoch is required.")
+            session_id = managed_session(session_id, version)
         return await asyncio.to_thread(set_auto_approval, data.get("enabled"),
-                                       request.session["session_id"],
+                                       session_id,
                                        request.app.state.config.db_path)
     return await mutation(request, run)
 
@@ -364,11 +384,15 @@ async def spa(request: Request) -> Response:
 
 def create_app(config: WebConfig | None = None) -> Starlette:
     config = config or WebConfig.from_env()
-    if (not config.session_secret or len(config.session_secret) < 32
-            or config.session_secret.startswith("CHANGE_ME")
-            or not config.pin_pepper or len(config.pin_pepper) < 32
-            or config.pin_pepper.startswith("CHANGE_ME")):
-        raise RuntimeError("Queue web session secret and PIN pepper are required.")
+    if config.managed_admin_token:
+        if (len(config.managed_admin_token) < 32 or
+                config.managed_admin_token.startswith("CHANGE_ME")):
+            raise RuntimeError("TASKS_ADMIN_TOKEN must be a strong service secret.")
+    elif (not config.session_secret or len(config.session_secret) < 32
+          or config.session_secret.startswith("CHANGE_ME")
+          or not config.pin_pepper or len(config.pin_pepper) < 32
+          or config.pin_pepper.startswith("CHANGE_ME")):
+        raise RuntimeError("Standalone Queue PIN secret and pepper are required.")
     routes = [
         Route(BASE, lambda _: RedirectResponse(f"{BASE}/", status_code=307)),
         Route(f"{BASE}/api/session", session),
@@ -392,6 +416,14 @@ def create_app(config: WebConfig | None = None) -> Starlette:
         Route(f"{BASE}/api/proposals/{{proposal_id}}/reject", protected(proposal_decision), methods=["POST"]),
         Route(f"{BASE}/api/auto-approval", protected(auto_approval), methods=["GET", "POST"]),
     ]
+    if config.managed_admin_token:
+        # Managed is exclusive: no browser PIN endpoints and no automatic
+        # fallback if the Switchboard token is missing or incorrect.
+        from .managed_api import routes_for_management
+        app = Starlette(routes=routes_for_management(
+            routes, config.managed_admin_token, config.managed_static_dir))
+        app.state.config = config
+        return app
     assets = config.static_dir / "assets"
     if assets.is_dir():
         routes.append(Mount(f"{BASE}/assets", app=StaticFiles(directory=assets), name="assets"))
