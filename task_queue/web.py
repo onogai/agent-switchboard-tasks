@@ -376,14 +376,15 @@ async def spa(request: Request) -> Response:
 
 def create_app(config: WebConfig | None = None) -> Starlette:
     config = config or WebConfig.from_env()
-    if (not config.session_secret or len(config.session_secret) < 32
-            or config.session_secret.startswith("CHANGE_ME")
-            or not config.pin_pepper or len(config.pin_pepper) < 32
-            or config.pin_pepper.startswith("CHANGE_ME")):
-        raise RuntimeError("Queue web session secret and PIN pepper are required.")
-    if config.managed_admin_token and (len(config.managed_admin_token) < 32 or
-                                       config.managed_admin_token.startswith("CHANGE_ME")):
-        raise RuntimeError("TASKS_ADMIN_TOKEN must be a strong service secret.")
+    if config.managed_admin_token:
+        if (len(config.managed_admin_token) < 32 or
+                config.managed_admin_token.startswith("CHANGE_ME")):
+            raise RuntimeError("TASKS_ADMIN_TOKEN must be a strong service secret.")
+    elif (not config.session_secret or len(config.session_secret) < 32
+          or config.session_secret.startswith("CHANGE_ME")
+          or not config.pin_pepper or len(config.pin_pepper) < 32
+          or config.pin_pepper.startswith("CHANGE_ME")):
+        raise RuntimeError("Standalone Queue PIN secret and pepper are required.")
     routes = [
         Route(BASE, lambda _: RedirectResponse(f"{BASE}/", status_code=307)),
         Route(f"{BASE}/api/session", session),
@@ -408,8 +409,12 @@ def create_app(config: WebConfig | None = None) -> Starlette:
         Route(f"{BASE}/api/auto-approval", protected(auto_approval), methods=["GET", "POST"]),
     ]
     if config.managed_admin_token:
+        # Managed is exclusive: no browser PIN endpoints and no automatic
+        # fallback if the Switchboard token is missing or incorrect.
         from .managed_api import routes_for_management
-        routes.extend(routes_for_management(routes, config.managed_admin_token))
+        app = Starlette(routes=routes_for_management(routes, config.managed_admin_token))
+        app.state.config = config
+        return app
     assets = config.static_dir / "assets"
     if assets.is_dir():
         routes.append(Mount(f"{BASE}/assets", app=StaticFiles(directory=assets), name="assets"))
