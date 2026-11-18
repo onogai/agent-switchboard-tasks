@@ -3,6 +3,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from starlette.testclient import TestClient
 
@@ -33,6 +34,7 @@ class ManagedAdminAuthTests(unittest.TestCase):
         return {
             "Authorization": "Bearer " + (self.TOKEN if token is None else token),
             "X-Switchboard-Session-ID": self.SESSION if session is None else session,
+            "X-Switchboard-Pin-Version": "1",
         }
 
     def test_manager_token_required_and_no_standalone_bypass(self):
@@ -58,14 +60,15 @@ class ManagedAdminAuthTests(unittest.TestCase):
         self.assertEqual(browser.status_code, 404)
 
     def test_proposals_and_auto_approval_use_managed_session_identity(self):
-        response = self.client.post("/internal/queue/api/auto-approval",
-                                    json={"enabled": True}, headers=self.managed_headers())
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertTrue(response.json()["enabled"])
-        status = self.client.get("/internal/queue/api/auto-approval",
-                                 headers=self.managed_headers())
-        self.assertEqual(status.status_code, 200)
-        self.assertTrue(status.json()["enabled"])
+        with patch("task_queue.managed_approval.authority_valid", return_value=True):
+            response = self.client.post("/internal/queue/api/auto-approval",
+                                        json={"enabled": True}, headers=self.managed_headers())
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertTrue(response.json()["enabled"])
+            status = self.client.get("/internal/queue/api/auto-approval",
+                                     headers=self.managed_headers())
+            self.assertEqual(status.status_code, 200)
+            self.assertTrue(status.json()["enabled"])
 
     def test_standalone_pin_still_works_without_manager_credentials(self):
         standalone_config = WebConfig(
