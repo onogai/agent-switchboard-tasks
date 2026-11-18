@@ -40,6 +40,7 @@ services:
       QUEUE_WEB_PIN_PEPPER: ${QUEUE_WEB_PIN_PEPPER:?Required}
       QUEUE_WEB_SESSION_SECRET: ${QUEUE_WEB_SESSION_SECRET:?Required}
       QUEUE_WEB_SECURE_COOKIE: ${QUEUE_WEB_SECURE_COOKIE:-0}
+      TASKS_ADMIN_TOKEN: ${TASKS_ADMIN_TOKEN:-}
     volumes: ["./state:/data"]
     ports: ["127.0.0.1:18769:8767"]
     networks: [addons]
