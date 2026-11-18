@@ -1,54 +1,50 @@
-# M7 management authentication contract
+# Managed Task Queue authentication contract
 
-When `TASKS_ADMIN_TOKEN` is set to a strong 32+ character secret, the Queue
-Web process operates in **managed-only** mode. The standalone browser routes
-(`/queue/api/login`, local PIN checks, UI) are not mounted.
+The Queue Web process selects **exactly one mode** at startup:
 
-Switchboard Admin authenticates a browser once using its own PIN session and
-checks CSRF/Origin for writes. Its server then calls the Queue private HTTP API
-on the Docker network:
+- **Standalone:** no `TASKS_ADMIN_TOKEN`; Queue verifies its own PIN
+  sessions and CSRF, and serves `/queue/`.
+- **Managed:** a strong `TASKS_ADMIN_TOKEN` enables the private
+  `/internal/queue/api/*` and `/internal/queue/ui/*` endpoints.
+  The standalone browser PIN routes are not mounted. Missing or malformed
+  managed credentials never trigger a standalone fallback.
 
-- Prefix: `/internal/queue/api/*`
-- Header: `Authorization: Bearer <TASKS_ADMIN_TOKEN>`
-- Header: `X-Switchboard-Session-ID: <opaque session id>`
-- Body: same JSON contract as the standalone Queue APIs.
-- Endpoint set: existing Queue management actions excluding login/session/logout.
+## Manager-to-Queue trust boundary
 
-The service token is **not** a browser token. Queue checks it on every request;
-the session ID is trusted only after service-token validation and binds
-approval/auto-approval operations to the central browser session. The Queue
-service never reads Manager cookies, Manager PIN data, or Gateway SQLite.
+Manager authenticates browser users with its own PIN, session, CSRF and origin
+checks. Only Manager forwards management requests on the private network:
 
-Invalid/missing tokens or browser session IDs return 401; no automatic fallback
-to standalone occurs. If the secret is unset, only standalone PIN auth is enabled.
-A malformed nonempty secret fails startup rather than exposing another mode.
+- `Authorization: Bearer <TASKS_ADMIN_TOKEN>`
+- `X-Switchboard-Session-ID: <opaque Manager session ID>`
+- `X-Switchboard-Pin-Version: <current epoch>` for managed approvals
 
-Generate an independent token with:
-`python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`
+Queue validates the service token before trusting the session ID or serving
+managed React assets. The browser never sees the service token, Queue does
+not read Manager cookies or PIN verifier, and Manager does not mount Queue's
+SQLite state. The separate Gateway controls MCP discovery, OAuth and grants.
 
-Set the **same** token in Manager and Queue Web on their private network.
-Do not use this token for the Task Queue MCP endpoint; existing MCP grants and
-OAuth policy remain Gateway responsibilities.
+Generate an independent token, e.g. with
+`python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`,
+and keep it private. Deploy the same token to Queue Web, Queue workers and
+Manager where relevant.
 
-## M8 managed auto-approval revocation
+## Managed automatic approvals
 
-Managed Queue Web requires `TASKS_AUTHORITY_URL` and `TASKS_ADMIN_TOKEN` to
-enable one-hour auto-approval. Manager forwards its current PIN version as
-`X-Switchboard-Pin-Version`; Queue stores the version alongside the session
-identity. The Queue MCP worker needs the **same** `TASKS_AUTHORITY_URL` and
-`TASKS_ADMIN_TOKEN` environment variables, not just Queue Web.
+Manager owns the current PIN epoch. Enabling a managed auto-approval captures
+that version and the authorizing Manager session identity. Before an
+automatic proposal decision, Queue workers validate the epoch through
+`POST /admin/internal/queue/validate-pin-version`, using the service token
+and `TASKS_AUTHORITY_URL` (normally
+`http://infrastructure_admin:8768` in production).
 
-Before automatically accepting a proposal, the worker checks the version via
-the Manager private endpoint
-`POST /admin/internal/queue/validate-pin-version` using the service token.
-If Manager is unavailable, credentials fail or PIN was changed, the proposal
-remains pending. No standalone PIN fallback is attempted in managed mode.
+When Manager is unavailable, the token is invalid or the PIN has rotated,
+automatic approval **fails closed** and proposals remain pending for manual
+review. The stale authorization cannot be silently re-enabled without
+new approval. Simultaneous PIN rotation and an in-flight decision can have
+a narrow concurrency window, so the Manager authority check must be kept
+near the decision.
 
-Standalone Queue installations omit these managed env variables entirely and
-continue to use their own PIN and one-hour approval window. Do not expose
-`TASKS_AUTHORITY_URL` publicly; in Switchboard Compose use the private
-`http://infrastructure_admin:8768` service address.
-
-The Manager PIN validator is an authorization check for a single proposal
-decision; in-flight decisions can have a narrow concurrency window during
-simultaneous Manager PIN rotation.
+Standalone deployments use Queue-owned PIN auth and the local one-hour
+approval window; they need no Manager authority URL. Do not expose any
+managed endpoints publicly. No second manager/Queue user login is required
+in the managed UI.
