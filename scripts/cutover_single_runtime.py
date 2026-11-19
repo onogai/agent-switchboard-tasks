@@ -89,22 +89,21 @@ def verify(state: Path, network: str, previous_image: str) -> None:
     for name in OLD:
         assert not inspect(name)["State"]["Running"], "Old Queue process still running"
 
-    # Test both endpoints from the running Core, including the old DNS names.
+    # Check both old DNS names and ports from Core. The MCP GET status is
+    # transport-dependent; the actual MCP handshake is checked below.
     docker("exec", "switchboard-prod-core", "python", "-c", """
+import socket
 import urllib.error
 import urllib.request
-for host, port, path, expected in (
-    ('tasks_web', 8767, '/internal/queue/api/overview', {401}),
-    ('tasks_mcp', 8771, '/mcp', {400, 405, 406}),
-):
-    try:
-        with urllib.request.urlopen(
-            f'http://{host}:{port}{path}', timeout=5
-        ) as response:
-            code = response.status
-    except urllib.error.HTTPError as error:
-        code = error.code
-    assert code in expected, (host, code)
+for host, port in (('tasks_web', 8767), ('tasks_mcp', 8771)):
+    with socket.create_connection((host, port), timeout=5):
+        pass
+try:
+    urllib.request.urlopen(
+        'http://tasks_web:8767/internal/queue/api/overview', timeout=5)
+    raise AssertionError('Managed API was unauthenticated')
+except urllib.error.HTTPError as error:
+    assert error.code == 401, error.code
 """)
     # MCP protocol handshake and catalog, not just an open TCP socket.
     docker("exec", NEW, "python", "-c", """
