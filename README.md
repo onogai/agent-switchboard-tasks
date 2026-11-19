@@ -27,21 +27,15 @@ The image builds the standalone and managed React bundles from Queue-owned
 
 ## Production
 
-The modular production cutover completed on **18 November 2026**.
-Gateway Core and Manager are deployed from `onogai/agent-switchboard`;
-Task Queue uses its own image and SQLite state, presently under
-`/home/onogai/agent-switchboard-tasks/state/queue.sqlite3`.
-The Core repository owns production orchestration; **do not run this
-repository's standalone Compose against that production project**.
+The production Queue now has its own [Compose manifest](compose.production.yaml)
+and [deployment instructions](PRODUCTION.md). It retains the existing
+`queue.sqlite3`, management token, internal DNS names and the single-scheduler
+rule. The portable `compose.yaml` remains a separate staging/standalone
+installation.
 
-The production-compatible Queue source comes from the consolidated M7–M9
-managed architecture in this repository. Existing deployments must retain
-their current state directory, service token, PIN epoch authority, registry
-contracts/grants and image references. A Git merge does **not** trigger a
-container rebuild, SQLite migration or scheduler restart.
-
-See [INSTALL.md](INSTALL.md) for setup and deployment boundaries, and
-[MANAGED_AUTH.md](MANAGED_AUTH.md) for the managed security contract.
+The running deployment is updated only after the host operator performs the
+targeted container cutover. Merging this repository alone does not restart
+production or migrate any state.
 
 ## Testing
 
