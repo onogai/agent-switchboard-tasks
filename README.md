@@ -30,6 +30,22 @@ The separate module entrypoints `mcp_server`, `tick`, and `web` remain
 available for tests; do not start them alongside the unified runtime on
 the same production database.
 
+## Fresh Git-based managed installation
+
+Install directly from this repo (or a fork with the same v1 manifest)
+using the host-side Switchboard installer:
+
+```bash
+./switchboard addon https://github.com/onogai/agent-switchboard-tasks.git
+```
+
+`switchboard-addon.yaml` declares the Queue service and endpoints.
+`compose.addon.yaml` runs managed Queue with private persistent state,
+a Core-provided Manager service token, and **no published host ports**.
+No separate Queue PIN or browser-session secrets are needed. The
+Gateway discovers 14 Queue tools but grants none until reviewed in Manager.
+The production and standalone manifests are not modified by this flow.
+
 ## Production
 
 See [PRODUCTION.md](PRODUCTION.md). Production keeps the existing SQLite,
