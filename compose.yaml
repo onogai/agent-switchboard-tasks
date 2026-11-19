@@ -1,53 +1,26 @@
-# Independent Task Queue Compose, staging only.
-# Build once: docker compose build; start only on a disposable state volume.
+# Disposable standalone Queue: same one-process runtime as production.
+# Never mount the production SQLite state into this Compose project.
+name: switchboard-tasks-local
 services:
-  tasks_mcp:
-    user: "${HOST_UID:?Set HOST_UID}:${HOST_GID:?Set HOST_GID}"
+  tasks:
     build: .
     image: agent-switchboard-tasks:local
+    user: "${HOST_UID:?Set HOST_UID}:${HOST_GID:?Set HOST_GID}"
     restart: unless-stopped
-    command: ["python", "-m", "task_queue.mcp_server"]
+    command: ["python", "-m", "task_queue.runtime"]
     environment:
       QUEUE_DB_PATH: /data/queue.sqlite3
       ALLOWED_GOOGLE_EMAIL: ${ALLOWED_GOOGLE_EMAIL:-}
       TASKS_ADMIN_TOKEN: ${TASKS_ADMIN_TOKEN:-}
       TASKS_AUTHORITY_URL: ${TASKS_AUTHORITY_URL:-}
-    volumes: ["./state:/data"]
-    networks: [addons]
-    read_only: true
-    tmpfs: [/tmp]
-    security_opt: [no-new-privileges:true]
-    cap_drop: [ALL]
-  tasks_tick:
-    user: "${HOST_UID:?Set HOST_UID}:${HOST_GID:?Set HOST_GID}"
-    image: agent-switchboard-tasks:local
-    restart: unless-stopped
-    command: ["python", "-m", "task_queue.tick"]
-    environment:
-      QUEUE_DB_PATH: /data/queue.sqlite3
-      TASKS_ADMIN_TOKEN: ${TASKS_ADMIN_TOKEN:-}
-      TASKS_AUTHORITY_URL: ${TASKS_AUTHORITY_URL:-}
-    volumes: ["./state:/data"]
-    networks: [addons]
-    read_only: true
-    tmpfs: [/tmp]
-    security_opt: [no-new-privileges:true]
-    cap_drop: [ALL]
-  tasks_web:
-    user: "${HOST_UID:?Set HOST_UID}:${HOST_GID:?Set HOST_GID}"
-    image: agent-switchboard-tasks:local
-    restart: unless-stopped
-    command: ["python", "-m", "uvicorn", "task_queue.web:create_app", "--factory", "--host", "0.0.0.0", "--port", "8767"]
-    environment:
-      QUEUE_DB_PATH: /data/queue.sqlite3
       QUEUE_WEB_PIN_PEPPER: ${QUEUE_WEB_PIN_PEPPER:-}
       QUEUE_WEB_SESSION_SECRET: ${QUEUE_WEB_SESSION_SECRET:-}
       QUEUE_WEB_SECURE_COOKIE: ${QUEUE_WEB_SECURE_COOKIE:-0}
-      TASKS_ADMIN_TOKEN: ${TASKS_ADMIN_TOKEN:-}
-      TASKS_AUTHORITY_URL: ${TASKS_AUTHORITY_URL:-}
     volumes: ["./state:/data"]
     ports: ["127.0.0.1:18769:8767"]
-    networks: [addons]
+    networks:
+      addons:
+        aliases: [tasks_mcp, tasks_web]
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
