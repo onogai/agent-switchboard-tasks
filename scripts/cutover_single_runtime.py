@@ -157,10 +157,12 @@ def main() -> None:
     stopped = False
     try:
         print("=== Stop old Queue processes and back up offline state ===", flush=True)
+        # Mark the cutover active before the first stop: a partial stop
+        # must also restart the original services on failure.
+        stopped = True
         # Stop the scheduler first; no competing generation is ever allowed.
         for name in OLD:
             docker("stop", name)
-        stopped = True
         run("sudo", "install", "-d", "-m", "0700", str(backup))
         run("sudo", "tar", "-czf", str(backup / "state.tar.gz"), "-C", str(state), ".")
         run("sudo", "cp", "-a", str(ENV), str(backup / "env.production"))
@@ -176,6 +178,8 @@ def main() -> None:
             docker("rm", "-f", NEW, check=False)
             for name in ("switchboard-tasks-web", "switchboard-tasks-mcp",
                          "switchboard-tasks-tick"):
+                if inspect(name)["State"]["Running"]:
+                    continue
                 result = docker("start", name, check=False)
                 if result.returncode:
                     print("CRITICAL: failed to restart " + name, file=sys.stderr,
