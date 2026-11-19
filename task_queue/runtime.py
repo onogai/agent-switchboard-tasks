@@ -1,4 +1,4 @@
-"""One managed Queue process: HTTP MCP, Manager API/UI, and scheduler.
+"""One Queue process: MCP, Web API/UI, and scheduler in either auth mode.
 
 A single Uvicorn server listens on both historical internal ports so the
 Gateway Registry and Manager do not need endpoint migrations. Both sockets
@@ -42,8 +42,6 @@ async def schedule_forever() -> None:
 
 def create_runtime_app() -> Starlette:
     config = WebConfig.from_env()
-    if not config.managed_admin_token:
-        raise RuntimeError("Single-container production runtime requires TASKS_ADMIN_TOKEN")
     web_app = create_app(config)
     mcp_app = mcp.http_app(path="/mcp")
 
@@ -60,7 +58,7 @@ def create_runtime_app() -> Starlette:
                 with suppress(asyncio.CancelledError):
                     await scheduler
 
-    # Web routes match only /internal/queue/... in managed mode. The final
+    # Web routes cover /internal/queue/... in managed mode or /queue/ in\n    # standalone mode. The final
     # root mount delegates /mcp to the complete FastMCP ASGI application,
     # including its own middleware.
     app = Starlette(routes=[*web_app.routes, Mount("/", app=mcp_app)],
