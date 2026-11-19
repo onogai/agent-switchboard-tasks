@@ -35,7 +35,7 @@ if [[ "$ready" != 1 ]]; then
   exit 1
 fi
 
-docker exec "$name" python -c '
+timeout 45 docker exec "$name" python -c '
 import asyncio
 from pathlib import Path
 import sqlite3
