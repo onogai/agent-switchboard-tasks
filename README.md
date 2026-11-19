@@ -1,50 +1,47 @@
 # Switchboard Task Queue
 
-Independent durable Task Queue add-on, with 14 FastMCP tools, SQLite, an hourly
-scheduler, and a React management UI. This repository owns the Queue code and
-images; **Gateway Core and Manager do not contain Queue Python packages**.
+Independent durable Task Queue with 14 FastMCP tools, SQLite, hourly
+scheduling, and a React management UI. Gateway Core/Manager do not include
+Queue Python packages.
 
-## Running modes
+## One container in both running modes
 
-| Mode | Authentication | User interface |
+Both Compose manifests start `python -m task_queue.runtime`: one process
+serving HTTP MCP at port 8771, Web/API at port 8767, and exactly one
+in-process scheduler.
+
+| Mode | Config | Auth and UI |
 | --- | --- | --- |
-| Standalone | Queue's own PIN, session and CSRF | `/queue/` |
-| Switchboard-managed | Private service bearer + Manager PIN/session; no Queue-local PIN | `/admin/queue/` served through Manager |
+| Managed production | `compose.production.yaml` | Manager PIN/session plus private service bearer; UI via Manager at `/admin/queue/` |
+| Disposable standalone | `compose.yaml` | Queue's own PIN/session/CSRF; UI at `/queue/` |
 
-The managed Queue provides a private `/internal/queue/api/*` management API
-and `/internal/queue/ui/*` assets. Manager authenticates the browser and
-proxies both routes; the browser never receives `TASKS_ADMIN_TOKEN`.
-Missing/invalid managed credentials fail closed, without standalone fallback.
+Managed API/UI is available only at `/internal/queue/*`, requiring
+`TASKS_ADMIN_TOKEN`; it never falls back to the standalone PIN routes.
+The browser never receives the service token. Standalone instead requires
+`QUEUE_WEB_SESSION_SECRET` and `QUEUE_WEB_PIN_PEPPER`.
 
-The **managed production runtime** is one Python process and one container:
-`python -m task_queue.runtime`. A single Uvicorn instance listens on ports
-8767 (Manager Web/API) and 8771 (MCP), and runs one cancellable hourly
-scheduler task. Existing `tasks_web` and `tasks_mcp` Docker DNS aliases
-remain valid. The individual `mcp_server`, `tick` and `web` entrypoints
-remain available for isolated staging/development, not production.
+MCP and Web ports retain the internal Docker aliases `tasks_mcp` and
+`tasks_web`, so Gateway/Manager do not need endpoint changes. Only
+standalone Web is optionally published to `127.0.0.1:18769`.
+The MCP port is private in both modes.
 
-The image builds the standalone and managed React bundles from Queue-owned
-`queue_ui/` source. No Gateway Registry or Telegram UI is bundled.
+The image builds both standalone and managed UI bundles from `queue_ui/`.
+The separate module entrypoints `mcp_server`, `tick`, and `web` remain
+available for tests; do not start them alongside the unified runtime on
+the same production database.
 
 ## Production
 
-The production Queue now has its own [Compose manifest](compose.production.yaml)
-and [deployment instructions](PRODUCTION.md). It retains the existing
-`queue.sqlite3`, management token, internal DNS names and the single-scheduler
-rule while consolidating three containers into one. The portable `compose.yaml` remains a separate staging/standalone
-installation.
+See [PRODUCTION.md](PRODUCTION.md). Production keeps the existing SQLite,
+service token, DNS aliases, and the single-scheduler invariant. Never mount
+the production state directory from staging `compose.yaml`.
 
-The running deployment is updated only after the host operator performs the
-targeted `scripts/cutover_single_runtime.py` cutover. Merging this repository alone does not restart
-production or migrate any state.
+## Tests
 
-## Testing
+`bash scripts/test.sh` builds an isolated disposable image and runs unit
+and security tests plus an actual unified runtime/MCP smoke test. CI uses
+the same suite. Managed browser-to-Manager integration is also covered
+in the Core repository.
 
-`bash scripts/test.sh` builds a disposable Docker image and runs the Queue
-unit/security tests without mounting live databases or secrets.
-The CI workflow runs the same tests, including a disposable runtime smoke test for both ports, managed authentication, MCP handshake and scheduler. Managed browser-to-Manager integration is
-also tested in the separately owned Core repository.
-
-Preserve consistent SQLite/WAL backups; never run competing schedulers on
-the same database, and never publish the MCP or managed Web ports to the
-public Internet.
+Back up SQLite using the online backup API (not an isolated live WAL file),
+and preserve the credentials needed to restore the deployment.
