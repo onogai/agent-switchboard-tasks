@@ -1,74 +1,74 @@
-# Independent production Task Queue
+# Managed production Queue — one container
 
-This deployment owns the Queue MCP, Web/API and **one** scheduler.
-It is independent of Gateway Core and Manager, and uses the existing
-`switchboard_addons` Docker network and the existing Queue database.
+The production Queue runs **one Python process** in one Compose service
+(`switchboard-tasks`). One Uvicorn server listens on two internal ports
+and hosts the same 14 MCP tools, Manager-authenticated HTTP API/UI, and a
+single in-process hourly scheduler.
 
-The portable `compose.yaml` is for fresh standalone installations only.
-Use `compose.production.yaml` for the managed production instance.
+- `tasks_mcp:8771/mcp`: existing Gateway Registry endpoint
+- `tasks_web:8767/internal/queue/...`: existing Manager endpoint
+- `switchboard-tasks`: one Docker container with both network aliases
+- SQLite: existing `TASKS_STATE_ROOT/queue.sqlite3`, including WAL files
+- Manager token: existing `TASKS_ADMIN_TOKEN`, unchanged
+
+No host ports are published. The old external `switchboard_addons` network
+is reused. The portable `compose.yaml` is a separate staging deployment;
+do **not** start it on production state.
+
+## One-time migration from three production containers
+
+From the Queue checkout on the Docker host:
+
+```bash
+cd ~/agent-switchboard-tasks
+git pull --ff-only
+python3 scripts/cutover_single_runtime.py
+```
+
+The script first builds the new image **while all three old containers are
+running**. It then stops the old scheduler, MCP and Web processes; creates
+a private offline backup of the state directory and Compose environment;
+starts the single container; verifies health, unchanged SQLite mount,
+network aliases, Manager HTTP auth and all 14 MCP tools; and removes only
+the three retired containers.
+
+On a cutover failure it removes the candidate and restarts the old
+containers. The original image is retained as
+`switchboard-tasks:rollback-before-single`; the backup is under
+`~/switchboard-cutover-backups/tasks-single-<UTC timestamp>/`.
+
+Do not run `docker compose down -v`, `--remove-orphans` or
+`docker system prune` as part of this migration. Never run a second
+scheduler against the same SQLite database.
 
 ## Private environment
 
-Create `.env.production` locally, mode 0600, with these keys:
+Keep the existing `.env.production` (mode 0600) unchanged:
 
 ```dotenv
-HOST_UID=<numeric UID>
-HOST_GID=<numeric GID>
-TASKS_STATE_ROOT=/home/onogai/agent-switchboard-tasks/state
+HOST_UID=<existing numeric UID>
+HOST_GID=<existing numeric GID>
+TASKS_STATE_ROOT=<absolute existing state directory>
 SWITCHBOARD_ADDONS_NETWORK=switchboard_addons
-TASKS_ADMIN_TOKEN=<existing Queue/Manager shared service token>
+TASKS_ADMIN_TOKEN=<existing Queue/Manager shared token>
 ALLOWED_GOOGLE_EMAIL=<existing allowed email>
 ```
 
-Preserve the existing token. Do not commit or print the file, and do not
-create a new token without changing Manager in the same operation.
-
-For an existing live deployment, obtain `TASKS_ADMIN_TOKEN` from the
-currently running Queue container **without echoing it**. Preserve the
-existing `queue.sqlite3` directory and all WAL files.
-
-## Deploy
-
-Before the first deployment, build the new image while the old Queue is
-still running:
-
-```bash
-docker compose -p switchboard-tasks --env-file .env.production \
-  -f compose.production.yaml config --quiet
-docker compose -p switchboard-tasks --env-file .env.production \
-  -f compose.production.yaml build tasks_mcp
-```
-
-Stop the three original Queue containers individually, including the
-scheduler, before starting the new ones. Never run two schedulers on the
-same SQLite database.
-
-```bash
-docker compose -p switchboard-tasks --env-file .env.production \
-  -f compose.production.yaml up -d --no-build tasks_mcp tasks_tick tasks_web
-docker compose -p switchboard-tasks --env-file .env.production \
-  -f compose.production.yaml ps
-```
-
-The Compose services retain internal DNS names `tasks_mcp` and
-`tasks_web` on the add-ons network. Manager reaches
-`http://tasks_web:8767`; Queue reaches Manager at
-`http://infrastructure_admin:8768`. The Queue database is bind-mounted
-from the existing state directory; no database copy is required.
-
-Verify the Queue API via Manager, a Queue MCP call, and a single active
-scheduler. Remove old stopped containers only after verification. Do not
-remove the former shared Compose project or its external networks while
-other services are still using them.
+Do not print, commit or rotate the shared token. The production runtime
+requires managed mode and fails closed if the token is missing or weak.
 
 ## Routine updates
 
 ```bash
+cd ~/agent-switchboard-tasks
 git pull --ff-only
 docker compose -p switchboard-tasks --env-file .env.production \
-  -f compose.production.yaml up -d --build tasks_mcp tasks_tick tasks_web
+  -f compose.production.yaml up -d --build tasks
+docker compose -p switchboard-tasks --env-file .env.production \
+  -f compose.production.yaml ps
 ```
 
-Preserve a consistent SQLite snapshot and the existing service token
-before upgrades. Avoid `down -v`, broad orphan removal and starting
-staging Compose against production state.
+The Queue image still contains the independent MCP, Web and tick modules
+for staging/compatibility, but production launches only
+`python -m task_queue.runtime`. Do not launch those entrypoints separately
+against the production database.
