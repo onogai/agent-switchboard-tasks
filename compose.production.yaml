@@ -1,0 +1,49 @@
+# Independent production Task Queue. Owns only its three Queue processes.
+# Use: docker compose -p switchboard-tasks --env-file .env.production
+#      -f compose.production.yaml up -d --build
+x-queue: &queue
+  image: switchboard-tasks:production
+  user: "${HOST_UID:?Set host UID}:${HOST_GID:?Set host GID}"
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:rw,nosuid,noexec,size=64m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging:
+    driver: json-file
+    options: {max-size: "5m", max-file: "2"}
+  env_file:
+    - ./.env.production
+  environment:
+    HOME: /tmp
+    QUEUE_DB_PATH: /data/queue.sqlite3
+    TASKS_AUTHORITY_URL: http://infrastructure_admin:8768
+  volumes:
+    - ${TASKS_STATE_ROOT:?Set absolute existing Queue state directory}:/data
+  networks: [addons]
+
+services:
+  tasks_mcp:
+    <<: *queue
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: switchboard-tasks-mcp
+    command: ["python", "-m", "task_queue.mcp_server"]
+
+  tasks_tick:
+    <<: *queue
+    container_name: switchboard-tasks-tick
+    command: ["python", "-m", "task_queue.tick"]
+
+  tasks_web:
+    <<: *queue
+    container_name: switchboard-tasks-web
+    command: ["python", "-m", "uvicorn", "task_queue.web:create_app", "--factory",
+              "--host", "0.0.0.0", "--port", "8767"]
+
+networks:
+  addons:
+    external: true
+    name: ${SWITCHBOARD_ADDONS_NETWORK:-switchboard_addons}
