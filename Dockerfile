@@ -15,4 +15,4 @@ COPY task_queue /app/task_queue
 COPY --from=ui /ui/dist /app/queue_ui/dist
 COPY --from=ui /ui/managed-dist /app/queue_ui/managed-dist
 EXPOSE 8767 8771
-CMD ["python", "-m", "task_queue.mcp_server"]
+CMD ["python", "-m", "task_queue.runtime"]
