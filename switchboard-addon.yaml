@@ -1,0 +1,11 @@
+# Flat v1 add-on manifest, consumed by the Switchboard host-side installer.
+# No catalog entry is required: forks with this file install by Git URL.
+schema: 1
+id: queue
+name: Task Queue
+compose: compose.addon.yaml
+service: tasks
+mcp_port: 8771
+mcp_path: /mcp
+manager_module: queue
+manager_port: 8767
