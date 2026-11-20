@@ -140,5 +140,11 @@
   "Disabled": "Desactivado",
   "Enable for one hour": "Activar durante una hora",
   "Disable": "Desactivar",
-  "Attempt": "Intento"
+  "Attempt": "Intento",
+  "Approve": "Aprobar",
+  "Reject": "Rechazar",
+  "Priority:": "Prioridad:",
+  "Available to agents now:": "Disponibles para los agentes ahora:",
+  "Total rules:": "Total de reglas:",
+  "No tasks ready right now.": "Ahora mismo no hay tareas listas."
 }
