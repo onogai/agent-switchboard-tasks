@@ -76,7 +76,7 @@ export function localePlugin(): Plugin {
               if (converted !== old) {
                 replaced++
                 return ts.factory.updateJsxAttribute(
-                  node, node.name, ts.factory.updateJsxExpression(initializer, initializer.dotDotDotToken, converted),
+                  node, node.name, ts.factory.updateJsxExpression(initializer, converted),
                 )
               }
             }
@@ -85,7 +85,7 @@ export function localePlugin(): Plugin {
             const converted = presentation(node.expression)
             if (converted !== node.expression) {
               replaced++
-              return ts.factory.updateJsxExpression(node, node.dotDotDotToken, converted)
+              return ts.factory.updateJsxExpression(node, converted)
             }
           }
           return ts.visitEachChild(node, visit, context)
