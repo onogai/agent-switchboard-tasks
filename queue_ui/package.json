@@ -4,8 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "npm run check:english && tsc -b && vite build && vite build --config vite.managed.config.ts",
+    "build": "npm run check:english && npm run check:locales && tsc -b && vite build && vite build --config vite.managed.config.ts",
     "check:english": "node scripts/checkEnglishUi.mjs",
+    "check:locales": "node scripts/checkLocalePacks.mjs",
     "test:ui": "node --experimental-strip-types --test src/*.test.mjs",
     "dev": "vite --host 0.0.0.0"
   },

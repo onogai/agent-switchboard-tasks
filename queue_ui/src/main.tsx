@@ -4,6 +4,9 @@ import { BrowserRouter } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CssBaseline, ThemeProvider, createTheme } from '@mui/material'
 import App from './App'
+import { getUiLanguage } from './i18n'
+
+document.documentElement.lang = getUiLanguage()
 
 const theme = createTheme({
   palette: {

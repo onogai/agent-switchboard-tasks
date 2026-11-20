@@ -15,6 +15,8 @@ import {
 } from '@mui/icons-material'
 import { api, clearCsrf } from './api'
 import { queueLayout } from './layoutMode'
+import { LanguageSwitcher } from './LanguageSwitcher'
+import { tx, languageTag } from './i18n'
 import type { Definition, DefinitionInput, Instance, MissPolicy, Proposal, ScheduleKind, Status } from './types'
 
 const statuses: Status[] = ['future', 'ready', 'leased', 'succeeded', 'failed', 'skipped', 'merged', 'cancelled']
@@ -35,25 +37,25 @@ const statusColor: Record<Status, 'default' | 'info' | 'warning' | 'success' | '
 function dateTime(value?: string | null) {
   if (!value) return '—'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('en-GB', {
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(languageTag(), {
     dateStyle: 'medium', timeStyle: 'short',
   }).format(date)
 }
 
 function StatusChip({ status }: { status: Status }) {
-  return <Chip size="small" label={statusLabel[status]} color={statusColor[status]} variant={status === 'future' ? 'outlined' : 'filled'} />
+  return <Chip size="small" label={tx(statusLabel[status])} color={statusColor[status]} variant={status === 'future' ? 'outlined' : 'filled'} />
 }
 
 function Loading() { return <Box sx={{ display: 'flex', justifyContent: 'center', p: 8 }}><CircularProgress /></Box> }
 function ErrorBox({ error }: { error: unknown }) { return <Alert severity="error">{error instanceof Error ? error.message : 'Unable to load data.'}</Alert> }
-function Empty({ text }: { text: string }) { return <Paper variant="outlined" sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>{text}</Paper> }
+function Empty({ text }: { text: string }) { return <Paper variant="outlined" sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>{tx(text)}</Paper> }
 
-function PageTitle({ title, description, action }: { title: string; description?: string; action?: React.ReactNode }) {
+function PageTitle({ title, description, action, rawTitle = false }: { title: string; description?: string; action?: React.ReactNode; rawTitle?: boolean }) {
   return <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} gap={1.5} sx={{ mb: 2 }}>
     <Box><Typography variant={embeddedQueue ? 'h6' : 'h4'} fontWeight={750}
-      sx={{ letterSpacing: '-.025em' }}>{title}</Typography>{description &&
+      sx={{ letterSpacing: '-.025em' }}>{rawTitle ? title : tx(title)}</Typography>{description &&
       <Typography variant={embeddedQueue ? 'body2' : 'body1'} color="text.secondary" sx={{ mt: .25 }}>
-        {description}
+        {tx(description)}
       </Typography>}</Box>
     {action}
   </Stack>
@@ -64,9 +66,9 @@ function ConfirmButton({ label, message, onConfirm, color = 'primary', icon }: {
 }) {
   const [open, setOpen] = useState(false)
   return <>
-    <Button variant="outlined" color={color} startIcon={icon} onClick={() => setOpen(true)}>{label}</Button>
+    <Button variant="outlined" color={color} startIcon={icon} onClick={() => setOpen(true)}>{tx(label)}</Button>
     <Dialog open={open} onClose={() => setOpen(false)}>
-      <DialogTitle>Confirm action</DialogTitle><DialogContent><Typography>{message}</Typography></DialogContent>
+      <DialogTitle>Confirm action</DialogTitle><DialogContent><Typography>{tx(message)}</Typography></DialogContent>
       <DialogActions><Button onClick={() => setOpen(false)}>Back</Button><Button color={color} variant="contained" onClick={() => { setOpen(false); onConfirm() }}>Confirm</Button></DialogActions>
     </Dialog>
   </>
@@ -120,7 +122,8 @@ function Shell() {
   }
   const content = <Box sx={{ p: 2.5, height: '100%' }}>
     <Box sx={{ px: 1, pb: 3 }}><Typography variant="overline" color="primary" fontWeight={800} letterSpacing={2}>SWITCHBOARD</Typography><Typography variant="h6" fontWeight={750}>Task Manager</Typography><Typography variant="body2" color="text.secondary">Local agent task queue</Typography></Box>
-    <Stack gap={.5}>{nav.map(item => <Box key={item.to} component={NavLink} end={item.to === '/'} to={item.to} onClick={() => setMobileOpen(false)} sx={{ textDecoration: 'none', color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1.5, px: 2, py: 1.3, borderRadius: 2, '&.active': { bgcolor: '#e9f0fb', color: 'primary.main', fontWeight: 700 }, '&:hover': { bgcolor: '#f0f4fa' } }}>{item.icon}{item.text}</Box>)}</Stack>
+    <Stack gap={.5}>{nav.map(item => <Box key={item.to} component={NavLink} end={item.to === '/'} to={item.to} onClick={() => setMobileOpen(false)} sx={{ textDecoration: 'none', color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1.5, px: 2, py: 1.3, borderRadius: 2, '&.active': { bgcolor: '#e9f0fb', color: 'primary.main', fontWeight: 700 }, '&:hover': { bgcolor: '#f0f4fa' } }}>{item.icon}{tx(item.text)}</Box>)}</Stack>
+    <Box sx={{ px: 1, mt: 1.5 }}><LanguageSwitcher /></Box>
     <Divider sx={{ my: 3 }} />{managedQueue ? <Button sx={{ mx: 1 }} href="/admin/">Back to Switchboard</Button> : <Button sx={{ mx: 1 }} onClick={async () => { await api.logout(); clearCsrf(); queryClient.clear(); window.location.assign('/queue/') }}>Log out</Button>}<Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>{managedQueue ? 'Protected by Switchboard session' : 'Available on the local network'}</Typography>
   </Box>
   return <Box sx={{ display: 'flex', minHeight: '100vh' }}>
@@ -131,11 +134,11 @@ function Shell() {
 
 function Metric({ label, value, note, color }: { label: string; value: string | number; note?: string; color?: string }) {
   return <Card><CardContent sx={{ p: embeddedQueue ? 2 : 2.5, '&:last-child': { pb: embeddedQueue ? 2 : 2.5 } }}>
-    <Typography variant="body2" color="text.secondary">{label}</Typography>
+    <Typography variant="body2" color="text.secondary">{tx(label)}</Typography>
     <Typography variant={embeddedQueue ? 'h5' : 'h3'}
       sx={{ fontWeight: 750, color: color || 'text.primary', my: embeddedQueue ? .25 : .6,
         fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
-    <Typography variant="caption" color="text.secondary">{note || ' '}</Typography>
+    <Typography variant="caption" color="text.secondary">{note ? tx(note) : ' '}</Typography>
   </CardContent></Card>
 }
 
@@ -172,7 +175,7 @@ function DashboardPage() {
   </>
 }
 
-function SectionHeading({ title, to }: { title: string; to: string }) { return <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}><Typography variant="h6" fontWeight={700}>{title}</Typography><Button component={RouterLink} to={to} size="small">All</Button></Stack> }
+function SectionHeading({ title, to }: { title: string; to: string }) { return <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}><Typography variant="h6" fontWeight={700}>{tx(title)}</Typography><Button component={RouterLink} to={to} size="small">All</Button></Stack> }
 
 function QueuePage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -285,7 +288,7 @@ function TaskPage() {
   try { if (result) result = JSON.parse(result) } catch { /* Show original text. */ }
   return <>
     <Button component={RouterLink} to="/queue" startIcon={<ArrowBackRounded />} sx={{ mb: 2 }}>Back to queue</Button>
-    <PageTitle title={task.title_snapshot} description={`Task ${task.id}`} action={<Stack direction="row" gap={1}><StatusChip status={task.status} />{(['future', 'ready', 'leased'] as Status[]).includes(task.status) && <ConfirmButton label="Cancel" color="error" message="Cancel this task instance? An agent holding a lease may already be working." onConfirm={() => cancel.mutate()} />}{(['failed', 'cancelled'] as Status[]).includes(task.status) && rule.data?.definition.is_active && !rule.data.definition.archived_at && <Button variant="outlined" onClick={() => retry.mutate()}>Retry</Button>}</Stack>} />
+    <PageTitle title={task.title_snapshot} rawTitle description={`Task ${task.id}`} action={<Stack direction="row" gap={1}><StatusChip status={task.status} />{(['future', 'ready', 'leased'] as Status[]).includes(task.status) && <ConfirmButton label="Cancel" color="error" message="Cancel this task instance? An agent holding a lease may already be working." onConfirm={() => cancel.mutate()} />}{(['failed', 'cancelled'] as Status[]).includes(task.status) && rule.data?.definition.is_active && !rule.data.definition.archived_at && <Button variant="outlined" onClick={() => retry.mutate()}>Retry</Button>}</Stack>} />
     {error && <ErrorBox error={new Error(error)} />}
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(0,2fr) minmax(300px,1fr)' }, gap: 3 }}>
       <Stack gap={3}><Card><CardContent sx={{ p: 3 }}><Typography variant="h6" fontWeight={700} gutterBottom>Agent instructions</Typography><Typography sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{task.instructions_snapshot}</Typography></CardContent></Card>
@@ -353,7 +356,10 @@ function AuthGate() {
   if (session.error) return <ErrorBox error={session.error} />
   if (session.data?.authenticated) return <Shell />
   return <Container maxWidth="xs" sx={{ pt: 12 }}><Card><CardContent sx={{ p: 4 }}>
-    <Typography variant="h5" fontWeight={700} gutterBottom>Task Queue sign-in</Typography>
+    <Stack direction="row" gap={1} alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+      <Typography variant="h5" fontWeight={700}>Task Queue sign-in</Typography>
+      <LanguageSwitcher compact />
+    </Stack>
     <Typography color="text.secondary" sx={{ mb: 3 }}>Enter your six-digit PIN.</Typography>
     <Box component="form" onSubmit={event => { event.preventDefault(); login.mutate() }}>
       <TextField label="PIN" type="password" value={pin} onChange={event => setPin(event.target.value)}

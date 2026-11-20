@@ -10,7 +10,7 @@ function inspect(directory) {
       if (entry.name !== 'locales') inspect(join(directory, entry.name))
       continue
     }
-    if (!/\.(tsx?|jsx?)$/.test(entry.name) || /\.test\./.test(entry.name)) continue
+    if (!/\.(tsx?|jsx?)$/.test(entry.name) || /\.test\./.test(entry.name) || entry.name === 'i18n.ts') continue
     const path = join(directory, entry.name)
     readFileSync(path, 'utf8').split('\n').forEach((line, i) => {
       if (/[\u0400-\u052F]/.test(line)) violations.push(`${relative(root, path)}:${i + 1}`)
