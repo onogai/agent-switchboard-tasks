@@ -14,13 +14,15 @@ import {
   RuleRounded,
 } from '@mui/icons-material'
 import { api, clearCsrf } from './api'
+import { queueLayout } from './layoutMode'
 import type { Definition, DefinitionInput, Instance, MissPolicy, Proposal, ScheduleKind, Status } from './types'
 
 const statuses: Status[] = ['future', 'ready', 'leased', 'succeeded', 'failed', 'skipped', 'merged', 'cancelled']
-const managedQueue = window.location.pathname.startsWith('/admin/queue')
 // The Manager owns the one shared top-level navigation. Queue keeps its own
 // standalone UI, but supplies only a compact sub-navigation when embedded.
-const embeddedQueue = managedQueue && window.self !== window.top
+const { managed: managedQueue, embedded: embeddedQueue } = queueLayout(
+  window.location.pathname, window.self !== window.top,
+)
 const statusLabel: Record<Status, string> = {
   future: 'Майбутня', ready: 'Готова', leased: 'Виконується', succeeded: 'Виконана',
   failed: 'Помилка', skipped: 'Пропущена', merged: 'Об’єднана', cancelled: 'Скасована',
