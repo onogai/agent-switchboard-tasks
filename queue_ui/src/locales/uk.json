@@ -146,5 +146,10 @@
   "Recent decisions": "Останні рішення",
   "Task Queue sign-in": "Вхід до черги задач",
   "Enter your six-digit PIN.": "Уведіть шість цифр PIN.",
-  "Sign in": "Увійти"
+  "Sign in": "Увійти",
+  "Language": "Мова",
+  "Disabled": "Вимкнено",
+  "Enable for one hour": "Увімкнути на годину",
+  "Disable": "Вимкнути",
+  "Attempt": "Спроба"
 }
