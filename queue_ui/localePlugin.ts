@@ -48,7 +48,10 @@ export function localePlugin(): Plugin {
         const visit = (node: ts.Node): ts.VisitResult<ts.Node> => {
           if (ts.isJsxText(node)) {
             const trimmed = node.text.trim()
-            if (!keys.has(trimmed)) return node
+            // JSX text is often wrapped across lines for readability.
+            // Compare catalog keys against a normalized display string.
+            const key = keys.has(trimmed) ? trimmed : trimmed.replace(/\\s+/g, ' ')
+            if (!keys.has(key)) return node
             replaced++
             const leading = node.text.match(/^\s*/)?.[0] || ''
             const trailing = node.text.match(/\s*$/)?.[0] || ''
@@ -56,7 +59,7 @@ export function localePlugin(): Plugin {
               ts.factory.createJsxOpeningFragment(),
               [
                 ...(leading ? [ts.factory.createJsxText(leading)] : []),
-                ts.factory.createJsxExpression(undefined, makeCall(trimmed)),
+                ts.factory.createJsxExpression(undefined, makeCall(key)),
                 ...(trailing ? [ts.factory.createJsxText(trailing)] : []),
               ],
               ts.factory.createJsxJsxClosingFragment(),
