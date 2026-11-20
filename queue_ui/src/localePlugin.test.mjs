@@ -19,7 +19,7 @@ test('only display text is translated; MCP and API values remain stable', () => 
       <div>
         <Tab value="Overview">Overview</Tab>
         <Chip label={status === 'active' ? 'Active' : 'Disabled'} />
-        <input placeholder="Search tools" value="Active" />
+        <input placeholder="Overview" value="Active" />
         <button onClick={() => send('Active')}>Confirm</button>
         <p>{userContent}</p>
         <span>{status === 'active' ? 'Active' : 'Disabled'}</span>
@@ -27,7 +27,7 @@ test('only display text is translated; MCP and API values remain stable', () => 
   `)
   assert.match(output, /__tx\(["']Overview["']\)/)
   assert.match(output, /__tx\(["']Confirm["']\)/)
-  assert.match(output, /__tx\(["']Search tools["']\)/)
+  assert.match(output, /__tx\(["']Overview["']\)/)
   assert.match(output, /value="Overview"/)
   assert.match(output, /value="Active"/)
   assert.match(output, /status === ["']active["']/)
