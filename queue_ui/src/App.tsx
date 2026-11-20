@@ -119,7 +119,7 @@ function Shell() {
     </Box>
   }
   const content = <Box sx={{ p: 2.5, height: '100%' }}>
-    <Box sx={{ px: 1, pb: 3 }}><Typography variant="overline" color="primary" fontWeight={800} letterSpacing={2}>NOGAI</Typography><Typography variant="h6" fontWeight={750}>Task Manager</Typography><Typography variant="body2" color="text.secondary">Local agent task queue</Typography></Box>
+    <Box sx={{ px: 1, pb: 3 }}><Typography variant="overline" color="primary" fontWeight={800} letterSpacing={2}>SWITCHBOARD</Typography><Typography variant="h6" fontWeight={750}>Task Manager</Typography><Typography variant="body2" color="text.secondary">Local agent task queue</Typography></Box>
     <Stack gap={.5}>{nav.map(item => <Box key={item.to} component={NavLink} end={item.to === '/'} to={item.to} onClick={() => setMobileOpen(false)} sx={{ textDecoration: 'none', color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1.5, px: 2, py: 1.3, borderRadius: 2, '&.active': { bgcolor: '#e9f0fb', color: 'primary.main', fontWeight: 700 }, '&:hover': { bgcolor: '#f0f4fa' } }}>{item.icon}{item.text}</Box>)}</Stack>
     <Divider sx={{ my: 3 }} />{managedQueue ? <Button sx={{ mx: 1 }} href="/admin/">Back to Switchboard</Button> : <Button sx={{ mx: 1 }} onClick={async () => { await api.logout(); clearCsrf(); queryClient.clear(); window.location.assign('/queue/') }}>Log out</Button>}<Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>{managedQueue ? 'Protected by Switchboard session' : 'Available on the local network'}</Typography>
   </Box>
