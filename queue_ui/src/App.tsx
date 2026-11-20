@@ -50,10 +50,10 @@ function Loading() { return <Box sx={{ display: 'flex', justifyContent: 'center'
 function ErrorBox({ error }: { error: unknown }) { return <Alert severity="error">{error instanceof Error ? error.message : 'Unable to load data.'}</Alert> }
 function Empty({ text }: { text: string }) { return <Paper variant="outlined" sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>{tx(text)}</Paper> }
 
-function PageTitle({ title, description, action }: { title: string; description?: string; action?: React.ReactNode }) {
+function PageTitle({ title, description, action, rawTitle = false }: { title: string; description?: string; action?: React.ReactNode; rawTitle?: boolean }) {
   return <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} gap={1.5} sx={{ mb: 2 }}>
     <Box><Typography variant={embeddedQueue ? 'h6' : 'h4'} fontWeight={750}
-      sx={{ letterSpacing: '-.025em' }}>{tx(title)}</Typography>{description &&
+      sx={{ letterSpacing: '-.025em' }}>{rawTitle ? title : tx(title)}</Typography>{description &&
       <Typography variant={embeddedQueue ? 'body2' : 'body1'} color="text.secondary" sx={{ mt: .25 }}>
         {tx(description)}
       </Typography>}</Box>
@@ -288,7 +288,7 @@ function TaskPage() {
   try { if (result) result = JSON.parse(result) } catch { /* Show original text. */ }
   return <>
     <Button component={RouterLink} to="/queue" startIcon={<ArrowBackRounded />} sx={{ mb: 2 }}>Back to queue</Button>
-    <PageTitle title={task.title_snapshot} description={`Task ${task.id}`} action={<Stack direction="row" gap={1}><StatusChip status={task.status} />{(['future', 'ready', 'leased'] as Status[]).includes(task.status) && <ConfirmButton label="Cancel" color="error" message="Cancel this task instance? An agent holding a lease may already be working." onConfirm={() => cancel.mutate()} />}{(['failed', 'cancelled'] as Status[]).includes(task.status) && rule.data?.definition.is_active && !rule.data.definition.archived_at && <Button variant="outlined" onClick={() => retry.mutate()}>Retry</Button>}</Stack>} />
+    <PageTitle title={task.title_snapshot} rawTitle description={`Task ${task.id}`} action={<Stack direction="row" gap={1}><StatusChip status={task.status} />{(['future', 'ready', 'leased'] as Status[]).includes(task.status) && <ConfirmButton label="Cancel" color="error" message="Cancel this task instance? An agent holding a lease may already be working." onConfirm={() => cancel.mutate()} />}{(['failed', 'cancelled'] as Status[]).includes(task.status) && rule.data?.definition.is_active && !rule.data.definition.archived_at && <Button variant="outlined" onClick={() => retry.mutate()}>Retry</Button>}</Stack>} />
     {error && <ErrorBox error={new Error(error)} />}
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(0,2fr) minmax(300px,1fr)' }, gap: 3 }}>
       <Stack gap={3}><Card><CardContent sx={{ p: 3 }}><Typography variant="h6" fontWeight={700} gutterBottom>Agent instructions</Typography><Typography sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{task.instructions_snapshot}</Typography></CardContent></Card>
