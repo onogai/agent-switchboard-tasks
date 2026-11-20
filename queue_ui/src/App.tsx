@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link as RouterLink, NavLink, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Link as RouterLink, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import {
   Alert, AppBar, Box, Button, Card, CardContent, Chip, CircularProgress, Container,
   Dialog, DialogActions, DialogContent, DialogTitle, Divider, Drawer, FormControl,
-  FormHelperText, IconButton, InputLabel, MenuItem, Paper, Select, Slider, Stack,
+  FormHelperText, IconButton, InputLabel, MenuItem, Paper, Select, Slider, Stack, Tab, Tabs,
   TextField, Toolbar, Tooltip, Typography, useMediaQuery, useTheme,
 } from '@mui/material'
 import {
@@ -14,10 +14,15 @@ import {
   RuleRounded,
 } from '@mui/icons-material'
 import { api, clearCsrf } from './api'
+import { queueLayout } from './layoutMode'
 import type { Definition, DefinitionInput, Instance, MissPolicy, Proposal, ScheduleKind, Status } from './types'
 
 const statuses: Status[] = ['future', 'ready', 'leased', 'succeeded', 'failed', 'skipped', 'merged', 'cancelled']
-const managedQueue = window.location.pathname.startsWith('/admin/queue')
+// The Manager owns the one shared top-level navigation. Queue keeps its own
+// standalone UI, but supplies only a compact sub-navigation when embedded.
+const { managed: managedQueue, embedded: embeddedQueue } = queueLayout(
+  window.location.pathname, window.self !== window.top,
+)
 const statusLabel: Record<Status, string> = {
   future: 'Майбутня', ready: 'Готова', leased: 'Виконується', succeeded: 'Виконана',
   failed: 'Помилка', skipped: 'Пропущена', merged: 'Об’єднана', cancelled: 'Скасована',
@@ -44,8 +49,12 @@ function ErrorBox({ error }: { error: unknown }) { return <Alert severity="error
 function Empty({ text }: { text: string }) { return <Paper variant="outlined" sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>{text}</Paper> }
 
 function PageTitle({ title, description, action }: { title: string; description?: string; action?: React.ReactNode }) {
-  return <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} gap={2} sx={{ mb: 3 }}>
-    <Box><Typography variant="h4" fontWeight={750} sx={{ letterSpacing: '-.035em' }}>{title}</Typography>{description && <Typography color="text.secondary" sx={{ mt: .5 }}>{description}</Typography>}</Box>
+  return <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }} gap={1.5} sx={{ mb: 2 }}>
+    <Box><Typography variant={embeddedQueue ? 'h6' : 'h4'} fontWeight={750}
+      sx={{ letterSpacing: '-.025em' }}>{title}</Typography>{description &&
+      <Typography variant={embeddedQueue ? 'body2' : 'body1'} color="text.secondary" sx={{ mt: .25 }}>
+        {description}
+      </Typography>}</Box>
     {action}
   </Stack>
 }
@@ -73,8 +82,42 @@ const nav = [
 function Shell() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const queryClient = useQueryClient()
+  const location = useLocation()
   const theme = useTheme()
   const mobile = useMediaQuery(theme.breakpoints.down('md'))
+  const routes = <Routes>
+    <Route path="/" element={<DashboardPage />} />
+    <Route path="/queue" element={<QueuePage />} />
+    <Route path="/tasks/:id" element={<TaskPage />} />
+    <Route path="/rules" element={<RulesPage />} />
+    <Route path="/rules/new" element={<RuleFormPage />} />
+    <Route path="/rules/:id" element={<RuleFormPage />} />
+    <Route path="/proposals" element={<ProposalsPage />} />
+    <Route path="*" element={<Empty text="Сторінку не знайдено." />} />
+  </Routes>
+  if (embeddedQueue) {
+    const active = location.pathname.startsWith('/tasks/') || location.pathname.startsWith('/queue')
+      ? '/queue' : location.pathname.startsWith('/rules') ? '/rules'
+        : location.pathname.startsWith('/proposals') ? '/proposals' : '/'
+    return <Box sx={{ minHeight: '100%', bgcolor: 'background.default' }}>
+      <Box sx={{ position: 'sticky', top: 0, zIndex: 5, borderBottom: 1,
+        borderColor: 'divider', bgcolor: 'background.default', px: { xs: 1, sm: 2.5 } }}>
+        <Tabs value={active} variant="scrollable" scrollButtons="auto"
+          aria-label="Розділи черги" sx={{ minHeight: 42,
+            '& .MuiTab-root': { minHeight: 42, px: 1.5, py: 0, fontSize: 13 },
+          }}>
+          <Tab label="Огляд" value="/" component={RouterLink} to="/" />
+          <Tab label="Черга" value="/queue" component={RouterLink} to="/queue" />
+          <Tab label="Правила" value="/rules" component={RouterLink} to="/rules" />
+          <Tab label="Пропозиції" value="/proposals" component={RouterLink} to="/proposals" />
+        </Tabs>
+      </Box>
+      <Box component="main" sx={{ px: { xs: 2, md: 3 }, pt: 2, pb: 3 }}>
+        <AutoApprovalBanner />
+        {routes}
+      </Box>
+    </Box>
+  }
   const content = <Box sx={{ p: 2.5, height: '100%' }}>
     <Box sx={{ px: 1, pb: 3 }}><Typography variant="overline" color="primary" fontWeight={800} letterSpacing={2}>NOGAI</Typography><Typography variant="h6" fontWeight={750}>Менеджер задач</Typography><Typography variant="body2" color="text.secondary">Локальна черга агента</Typography></Box>
     <Stack gap={.5}>{nav.map(item => <Box key={item.to} component={NavLink} end={item.to === '/'} to={item.to} onClick={() => setMobileOpen(false)} sx={{ textDecoration: 'none', color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1.5, px: 2, py: 1.3, borderRadius: 2, '&.active': { bgcolor: '#e9f0fb', color: 'primary.main', fontWeight: 700 }, '&:hover': { bgcolor: '#f0f4fa' } }}>{item.icon}{item.text}</Box>)}</Stack>
@@ -82,21 +125,18 @@ function Shell() {
   </Box>
   return <Box sx={{ display: 'flex', minHeight: '100vh' }}>
     {mobile ? <><AppBar position="fixed" color="inherit" elevation={0} sx={{ borderBottom: 1, borderColor: 'divider' }}><Toolbar><IconButton onClick={() => setMobileOpen(true)} aria-label="Відкрити меню"><MenuRounded /></IconButton><Typography fontWeight={700} sx={{ ml: 1 }}>Менеджер задач</Typography></Toolbar></AppBar><Drawer open={mobileOpen} onClose={() => setMobileOpen(false)} PaperProps={{ sx: { width: 250 } }}>{content}</Drawer></> : <Drawer variant="permanent" PaperProps={{ sx: { width: 250, borderRight: 1, borderColor: 'divider' } }}>{content}</Drawer>}
-    <Box component="main" sx={{ flex: 1, minWidth: 0, ml: mobile ? 0 : '250px', pt: mobile ? 10 : 5, pb: 7 }}><Container maxWidth="xl"><AutoApprovalBanner /><Routes>
-      <Route path="/" element={<DashboardPage />} />
-      <Route path="/queue" element={<QueuePage />} />
-      <Route path="/tasks/:id" element={<TaskPage />} />
-      <Route path="/rules" element={<RulesPage />} />
-      <Route path="/rules/new" element={<RuleFormPage />} />
-      <Route path="/rules/:id" element={<RuleFormPage />} />
-      <Route path="/proposals" element={<ProposalsPage />} />
-      <Route path="*" element={<Empty text="Сторінку не знайдено." />} />
-    </Routes></Container></Box>
+    <Box component="main" sx={{ flex: 1, minWidth: 0, ml: mobile ? 0 : '250px', pt: mobile ? 10 : 5, pb: 7 }}><Container maxWidth="xl"><AutoApprovalBanner />{routes}</Container></Box>
   </Box>
 }
 
 function Metric({ label, value, note, color }: { label: string; value: string | number; note?: string; color?: string }) {
-  return <Card><CardContent sx={{ p: 2.5 }}><Typography variant="body2" color="text.secondary">{label}</Typography><Typography variant="h3" sx={{ fontWeight: 750, color: color || 'text.primary', my: .6 }}>{value}</Typography><Typography variant="caption" color="text.secondary">{note || ' '}</Typography></CardContent></Card>
+  return <Card><CardContent sx={{ p: embeddedQueue ? 2 : 2.5, '&:last-child': { pb: embeddedQueue ? 2 : 2.5 } }}>
+    <Typography variant="body2" color="text.secondary">{label}</Typography>
+    <Typography variant={embeddedQueue ? 'h5' : 'h3'}
+      sx={{ fontWeight: 750, color: color || 'text.primary', my: embeddedQueue ? .25 : .6,
+        fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
+    <Typography variant="caption" color="text.secondary">{note || ' '}</Typography>
+  </CardContent></Card>
 }
 
 function TaskList({ tasks, empty }: { tasks: Instance[]; empty: string }) {
@@ -113,13 +153,13 @@ function DashboardPage() {
   const data = overview.data!
   return <>
     <PageTitle title="Огляд черги" description="Поточний стан задач та найближчі запуски" action={<Stack direction="row" gap={1}><Tooltip title="Оновити"><IconButton onClick={() => client.invalidateQueries()}><RefreshRounded /></IconButton></Tooltip><Button component={RouterLink} to="/rules/new" variant="contained" startIcon={<AddRounded />}>Нове правило</Button></Stack>} />
-    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', lg: 'repeat(4,1fr)' }, gap: 2, mb: 3 }}>
+    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', lg: 'repeat(4,1fr)' }, gap: 1.5, mb: 2 }}>
       <Metric label="Доступні агенту зараз" value={data.claimable_count} note="Готові до отримання" color="#2456a7" />
       <Metric label="Майбутні" value={data.counts.future || 0} note="Створені наперед" />
       <Metric label="Виконуються" value={data.counts.leased || 0} note="Зарезервовані агентом" />
       <Metric label="Активні правила" value={data.active_rule_count} note={`Усього правил: ${data.rule_count}`} />
     </Box>
-    <Alert severity={data.claimable_count ? 'info' : 'success'} sx={{ mb: 3 }}>
+    <Alert severity={data.claimable_count ? 'info' : 'success'} sx={{ mb: 2 }}>
       {data.claimable_count ? `Агент може взяти ${data.claimable_count} задач(у) зараз.` : 'Зараз готових задач немає.'}
       {data.next_due_at ? ` Наступна запланована на ${dateTime(data.next_due_at)}.` : ''} Майбутні задачі стають доступними лише у свій час.
     </Alert>
