@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import uk from './src/locales/uk.json'
+import es from './src/locales/es-ES.json'
 import ts from 'typescript'
 import type { Plugin } from 'vite'
 
@@ -10,9 +9,6 @@ import type { Plugin } from 'vite'
  * API payloads, user content and non-JSX JavaScript are never localized.
  */
 export function localePlugin(): Plugin {
-  const root = dirname(fileURLToPath(import.meta.url))
-  const uk = JSON.parse(readFileSync(resolve(root, 'src/locales/uk.json'), 'utf8')) as Record<string, string>
-  const es = JSON.parse(readFileSync(resolve(root, 'src/locales/es-ES.json'), 'utf8')) as Record<string, string>
   const keys = new Set([...Object.keys(uk), ...Object.keys(es)])
   const noTranslateAttribute = new Set([
     'id', 'key', 'name', 'value', 'to', 'href', 'src', 'type', 'variant',
@@ -47,12 +43,12 @@ export function localePlugin(): Plugin {
                 ts.factory.createJsxExpression(undefined, makeCall(trimmed)),
                 ...(trailing ? [ts.factory.createJsxText(trailing)] : []),
               ],
-              ts.factory.createJsxClosingFragment(),
+              ts.factory.createJsxJsxClosingFragment(),
             )
           }
           if (ts.isJsxAttribute(node)) {
             const attr = node.name.getText(source)
-            if (ts.isStringLiteral(node.initializer) &&
+            if (node.initializer && ts.isStringLiteral(node.initializer) &&
                 !noTranslateAttribute.has(attr) && keys.has(node.initializer.text)) {
               replaced++
               return ts.factory.updateJsxAttribute(node, node.name,
