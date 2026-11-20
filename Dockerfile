@@ -4,7 +4,7 @@ COPY queue_ui/package.json queue_ui/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY queue_ui/index.html queue_ui/tsconfig.json queue_ui/vite.config.ts queue_ui/vite.managed.config.ts ./
 COPY queue_ui/src ./src
-RUN npm run build
+RUN npm run test:ui && npm run build
 
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
