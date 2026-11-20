@@ -15,6 +15,14 @@ in-process scheduler.
 | Managed production | `compose.production.yaml` | Manager PIN/session plus private service bearer; UI via Manager at `/admin/queue/` |
 | Disposable standalone | `compose.yaml` | Queue's own PIN/session/CSRF; UI at `/queue/` |
 
+When opened from the main Switchboard Admin **Queue** tab, the managed React UI
+runs in a same-origin protected frame. Manager owns the common top navigation
+and Queue shows only its compact local sections (Overview, Queue, Rules,
+Proposals). Opening `/admin/queue/` directly retains the independent
+sidebar and the return link, while standalone `/queue/` keeps its normal
+PIN-protected interface. UI embedding does not change scheduler behaviour,
+state ownership or service authentication.
+
 Managed API/UI is available only at `/internal/queue/*`, requiring
 `TASKS_ADMIN_TOKEN`; it never falls back to the standalone PIN routes.
 The browser never receives the service token. Standalone instead requires
