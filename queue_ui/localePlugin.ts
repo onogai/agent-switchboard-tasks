@@ -50,7 +50,7 @@ export function localePlugin(): Plugin {
             const trimmed = node.text.trim()
             // JSX text is often wrapped across lines for readability.
             // Compare catalog keys against a normalized display string.
-            const key = keys.has(trimmed) ? trimmed : trimmed.replace(/\\s+/g, ' ')
+            const key = keys.has(trimmed) ? trimmed : trimmed.replace(/\s+/g, ' ')
             if (!keys.has(key)) return node
             replaced++
             const leading = node.text.match(/^\s*/)?.[0] || ''
