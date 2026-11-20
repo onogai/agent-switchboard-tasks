@@ -60,7 +60,7 @@ export function localePlugin(): Plugin {
             }
           }
           if (inJsx && ts.isStringLiteral(node) && keys.has(node.text) &&
-              !ts.isJsxAttribute(parent!) &&
+              !(parent && ts.isJsxAttribute(parent)) &&
               !(parent && ts.isBinaryExpression(parent)) &&
               !(parent && ts.isPropertyAssignment(parent) && parent.name === node)) {
             replaced++
