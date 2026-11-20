@@ -135,5 +135,10 @@
   "Recent decisions": "Decisiones recientes",
   "Task Queue sign-in": "Acceso a la cola de tareas",
   "Enter your six-digit PIN.": "Introduce tu PIN de seis dígitos.",
-  "Sign in": "Iniciar sesión"
+  "Sign in": "Iniciar sesión",
+  "Language": "Idioma",
+  "Disabled": "Desactivado",
+  "Enable for one hour": "Activar durante una hora",
+  "Disable": "Desactivar",
+  "Attempt": "Intento"
 }
