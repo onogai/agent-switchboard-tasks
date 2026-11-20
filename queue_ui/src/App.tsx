@@ -35,7 +35,7 @@ const statusColor: Record<Status, 'default' | 'info' | 'warning' | 'success' | '
 function dateTime(value?: string | null) {
   if (!value) return '—'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('uk-UA', {
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('en-GB', {
     dateStyle: 'medium', timeStyle: 'short',
   }).format(date)
 }
