@@ -151,5 +151,11 @@
   "Disabled": "Вимкнено",
   "Enable for one hour": "Увімкнути на годину",
   "Disable": "Вимкнути",
-  "Attempt": "Спроба"
+  "Attempt": "Спроба",
+  "Approve": "Схвалити",
+  "Reject": "Відхилити",
+  "Priority:": "Пріоритет:",
+  "Available to agents now:": "Доступно агентам зараз:",
+  "Total rules:": "Усього правил:",
+  "No tasks ready right now.": "Зараз немає готових задач."
 }
