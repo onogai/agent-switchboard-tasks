@@ -47,6 +47,14 @@ class ManagedAdminAuthTests(unittest.TestCase):
         self.assertEqual(self.client.get("/queue/api/overview",
                                          headers=self.managed_headers()).status_code, 404)
 
+    def test_generic_ui_api_mutation_uses_manager_session_and_token(self):
+        path = "/internal/queue/ui/api/definitions"
+        payload = {"title": "From generic Manager iframe", "instructions": "Run on demand"}
+        self.assertEqual(self.client.post(path, json=payload).status_code, 401)
+        result = self.client.post(path, json=payload, headers=self.managed_headers())
+        self.assertEqual(200, result.status_code, result.text)
+        self.assertEqual(payload["title"], list_definitions(self.db)[0]["title"])
+
     def test_managed_json_mutation_uses_service_auth_not_browser_csrf(self):
         url = "/internal/queue/api/definitions"
         payload = {"title": "Remote managed rule", "instructions": "Review daily"}

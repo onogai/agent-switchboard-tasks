@@ -9,6 +9,15 @@ test('embedded Queue keeps shared Manager navigation', () => {
     { managed: true, embedded: true })
 })
 
+test('managed add-on UI uses Queue-owned page without duplicating Manager sidebar', () => {
+  assert.deepEqual(queueLayout('/admin/addon-ui/tasks/', true),
+    { managed: true, embedded: true })
+  assert.deepEqual(queueLayout('/admin/addon-ui/tasks/rules/some-rule', true),
+    { managed: true, embedded: true })
+  assert.deepEqual(queueLayout('/admin/addon-ui/tasks/', false),
+    { managed: true, embedded: false })
+})
+
 test('Queue opened directly retains standalone sidebar and Manager return link', () => {
   assert.deepEqual(queueLayout('/admin/queue/', false),
     { managed: true, embedded: false })

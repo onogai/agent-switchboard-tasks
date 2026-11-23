@@ -1,8 +1,12 @@
 import type { Definition, DefinitionInput, Instance, Overview, QueueEvent, Attempt, Proposal } from './types'
 
-const legacyQueue = window.location.pathname.startsWith('/queue')
-const base = legacyQueue ? '/queue/api' : '/admin/api/queue'
-const sessionPath = legacyQueue ? '/queue/api/session' : '/admin/api/session'
+import { queueMount } from './layoutMode'
+
+const mount = queueMount(window.location.pathname)
+const base = mount === '/queue' ? '/queue/api'
+  : mount === '/admin/queue' ? '/admin/api/queue'
+    : mount + '/api'
+const sessionPath = mount === '/queue' ? '/queue/api/session' : '/admin/api/session'
 let csrfToken: string | null = null
 
 export function clearCsrf() { csrfToken = null }

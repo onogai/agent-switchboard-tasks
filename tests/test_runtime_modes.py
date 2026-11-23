@@ -16,6 +16,7 @@ class RuntimeModeTests(unittest.TestCase):
             app = create_runtime_app()
         paths = {route.path for route in app.routes}
         self.assertIn("/internal/queue/api/overview", paths)
+        self.assertIn("/internal/queue/ui/api/overview", paths)
         self.assertNotIn("/queue/api/overview", paths)
         self.assertIn("", paths)  # FastMCP root mount
 
@@ -29,6 +30,7 @@ class RuntimeModeTests(unittest.TestCase):
         paths = {route.path for route in app.routes}
         self.assertIn("/queue/api/overview", paths)
         self.assertNotIn("/internal/queue/api/overview", paths)
+        self.assertNotIn("/internal/queue/ui/api/overview", paths)
         self.assertIn("", paths)
 
     def test_standalone_requires_secrets(self):

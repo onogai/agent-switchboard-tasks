@@ -19,6 +19,7 @@ from .web import BASE, reply
 
 
 MANAGED_BASE = "/internal/queue/api"
+UI_API_BASE = "/internal/queue/ui/api"
 _SESSION_ID = re.compile(r"[A-Za-z0-9_-]{20,128}\Z")
 
 
@@ -48,8 +49,12 @@ def routes_for_management(queue_routes: list[Route], token: str, static_dir: Pat
                     request.scope["_managed_admin_pin_version"] = version
             return await endpoint(request)
 
-        result.append(Route(MANAGED_BASE + "/" + suffix, managed_handler,
-                            methods=route.methods))
+        # Keep the old private API during Manager migration, while allowing
+        # the generic add-on UI ingress to carry its API under the same prefix
+        # as the add-on-owned HTML and assets.
+        for base in (MANAGED_BASE, UI_API_BASE):
+            result.append(Route(base + "/" + suffix, managed_handler,
+                                methods=route.methods))
     async def managed_ui(request):
         # Queue UI is an add-on-owned asset, served only to the Manager proxy.
         # The browser never receives the private service token.
