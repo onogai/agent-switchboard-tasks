@@ -1,0 +1,12 @@
+# Production isolated add-on package; intentionally separate from v1 portable manifest.
+# Before production migration, copy this into switchboard-addon.yaml in a fork/ref.
+schema: 2
+id: queue
+name: Task Queue
+compose: compose.addon.v2.yaml
+service: queue
+services: queue
+state_dirs: data
+secret_files: admintoken
+mcp_port: 8771
+mcp_path: /mcp
