@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CssBaseline, ThemeProvider, createTheme } from '@mui/material'
 import App from './App'
 import { getUiLanguage } from './i18n'
+import { queueMount } from './layoutMode'
 
 document.documentElement.lang = getUiLanguage()
 
@@ -32,7 +33,7 @@ createRoot(document.getElementById('root')!).render(
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter basename={window.location.pathname.startsWith('/admin/queue') ? '/admin/queue' : '/queue'}><App /></BrowserRouter>
+        <BrowserRouter basename={queueMount(window.location.pathname)}><App /></BrowserRouter>
       </QueryClientProvider>
     </ThemeProvider>
   </React.StrictMode>,

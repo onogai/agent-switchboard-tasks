@@ -1,5 +1,44 @@
 # Migrating a live production Queue into a Switchboard add-on
 
+## Managed Queue UI (November 2026)
+
+The Queue React frontend already belongs to this repository. The production
+schema-v2 manifest now exposes its UI through Switchboard's generic,
+PIN-protected `/admin/addon-ui/tasks/` route. Existing rule, task, attempt and
+proposal records remain in Queue SQLite; no UI-specific data migration exists.
+
+Before starting, update the Switchboard Core/Manager to a release containing
+generic UI query/session forwarding and staged-cutover UI registration.
+**Do not run the new Queue image against the legacy Queue database while the
+old scheduler is running.**
+
+The safe sequence is:
+1. Stage `tasks` using the command below. Its database starts empty and its
+   MCP source is not registered. Confirm that the legacy Queue still runs.
+2. Optionally run `./switchboard addon ui-sync tasks` to preview the *empty*
+   new Queue UI without switching MCP tools. This adds a second Queue tab.
+3. Stop both Queue containers, perform the already documented offline SQLite
+   and service-token migration, and start **only** the managed add-on.
+4. Run `./switchboard addon cutover tasks --dry-run` before cutover. The
+   successful cutover automatically registers the new UI (or refreshes the
+   earlier preview registration) with the **migrated** token. No special
+   Manager proxy configuration is needed for the new tab.
+5. Confirm the new UI shows the actual rules, instances and proposals, that
+   filters and mutations work, and that the managed Queue has exactly one
+   scheduler. Existing MCP tools/grants stay associated with source `tasks`,
+   but contract reapproval is required after rebind.
+6. Only **after** acceptance, remove the Manager's legacy `/admin/tasks` tab,
+   `/admin/queue` asset route and `/admin/api/queue/*` proxy in Switchboard
+   Core. Do not remove those paths before the legacy cutover is completed.
+
+The managed UI reuses the existing Manager language setting
+`switchboard.admin.locale` (en, uk, es-ES). `addon uninstall tasks` archives
+the installed state by default; it is **not** a safe shortcut to discard a
+live production Queue. For rollback, follow the reverse SQLite migration below,
+then use the documented cutover rollback; the managed UI registration is removed
+when routing is switched back to the legacy Queue.
+
+
 This is a planned-downtime operation. Production Queue has one scheduler,
 a live queue.sqlite3 database, Manager UI/service token and 14 granted
 MCP tools. Never start two Queue schedulers on one database.
@@ -66,10 +105,12 @@ Registry keeps source ID tasks, stable tool IDs and grants. The existing
 contracts enter review and need reapproval in Manager before agents can
 use them again.
 
-Set SWITCHBOARD_TASKS_ADMIN_URL=http://addon-tasks:8767 in the private
-~/agent-switchboard/.env.production. Preserve the existing Manager token.
+The new UI does **not** need SWITCHBOARD_TASKS_ADMIN_URL. The old
+Manager Queue tab continues using that legacy variable until it is removed.
+You may point it at http://addon-tasks:8767 temporarily (keeping the existing
+Manager token) if old Queue UI/API compatibility is required during acceptance.
+After completing acceptance, remove the legacy tab/proxy and related settings.
 
-    ./switchboard production up -d --no-deps gateway_manager
     ./switchboard production doctor
 
 Keep the old switchboard-tasks container stopped but intact until the
