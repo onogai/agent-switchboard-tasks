@@ -153,7 +153,7 @@ def migrate(legacy_env: Path, addon_root: Path, *,
     if not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", token):
         raise MigrationError("Unsupported or invalid existing service token")
     info_path = addon_root / "installation.json"
-    if addon_root.is_symlink() or info_path.is_symlink() or not info_path.is_file():
+    if not addon_root.is_absolute() or addon_root.is_symlink() or info_path.is_symlink() or not info_path.is_file():
         raise MigrationError("Missing or unsafe add-on metadata")
     info = json.loads(info_path.read_text())
     if (info.get("schema") != "2" or info.get("target") != "production"
@@ -180,7 +180,8 @@ def migrate(legacy_env: Path, addon_root: Path, *,
         snapshot(target)  # Never silently overwrite an unknown/corrupt database.
     generated_secret = addon_root / "state" / "secrets" / "admintoken"
     addon_config = addon_root / "config.env"
-    if not generated_secret.is_file() or not addon_config.is_file():
+    if (generated_secret.is_symlink() or addon_config.is_symlink()
+            or not generated_secret.is_file() or not addon_config.is_file()):
         raise MigrationError("Missing generated private add-on credentials")
     existing_lines = addon_config.read_text().splitlines()
     secret_lines = [line for line in existing_lines
@@ -250,7 +251,7 @@ def main() -> None:
     parser.add_argument("--commit", action="store_true")
     parser.add_argument("--confirm", help="Must equal add-on instance with --commit")
     args = parser.parse_args()
-    root = args.addon_root.resolve()
+    root = args.addon_root.expanduser()
     if args.commit:
         expected = json.loads((root / "installation.json").read_text())["instance"]
         if args.confirm != expected:
