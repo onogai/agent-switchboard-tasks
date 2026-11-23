@@ -1,0 +1,41 @@
+# Schema-v2 production add-on. Independently owned SQLite, no shared host mounts.
+services:
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "${HOST_UID:?}:${HOST_GID:?}"
+    restart: unless-stopped
+    command: ["python", "-m", "task_queue.runtime"]
+    environment:
+      HOME: /tmp
+      QUEUE_DB_PATH: /data/queue.sqlite3
+      TASKS_ADMIN_TOKEN: "${SWITCHBOARD_ADDON_SECRET_ADMINTOKEN:?}"
+      TASKS_AUTHORITY_URL: http://infrastructure_admin:8768
+    volumes:
+      - "${SWITCHBOARD_ADDON_STATE:?}/data:/data"
+    networks:
+      addons:
+        aliases:
+          - "${SWITCHBOARD_ADDON_DNS:?}"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,noexec,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; [socket.create_connection(('127.0.0.1', p), 2).close() for p in (8767, 8771)]"]
+      interval: 20s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+networks:
+  addons:
+    external: true
+    name: "${SWITCHBOARD_ADDONS_NETWORK:?}"
