@@ -63,6 +63,12 @@ class QueueUiOwnershipTests(unittest.TestCase):
         self.assertEqual(200, result.status_code, result.text)
         self.assertIn("counts", result.json())
 
+    def test_unknown_api_does_not_fall_back_to_spa(self):
+        response = self.managed.get("/internal/queue/ui/api/not-a-method",
+                                    headers=self.headers())
+        self.assertEqual(404, response.status_code)
+        self.assertEqual("application/json", response.headers["content-type"])
+
     def test_hidden_missing_or_nested_assets_are_not_exposed(self):
         for path in ("/internal/queue/ui/assets/.env",
                      "/internal/queue/ui/assets/nested/script.js",

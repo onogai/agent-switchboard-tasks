@@ -71,6 +71,9 @@ def routes_for_management(queue_routes: list[Route], token: str, static_dir: Pat
             if not path.is_file():
                 return reply({"error": "Asset not found."}, 404)
             return FileResponse(path, headers={"Cache-Control": "public, max-age=3600"})
+        # Unknown private API paths must not accidentally return the SPA HTML.
+        if tail.startswith("api/"):
+            return reply({"error": "Queue management route not found."}, 404)
         # SPA fallback only for reasonable routes: never serve hidden or path traversal files.
         if tail and (not re.fullmatch(r"[A-Za-z0-9_./-]{1,512}", tail) or
                      any(p in {".", "..", ""} for p in tail.split("/"))):
