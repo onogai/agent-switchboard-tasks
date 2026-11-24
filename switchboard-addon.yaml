@@ -1,11 +1,19 @@
-# Flat v1 add-on manifest, consumed by the Switchboard host-side installer.
-# No catalog entry is required: forks with this file install by Git URL.
-schema: 1
+# Isolated disposable portable-v2 lifecycle acceptance (NOT the release manifest).
+# This branch is for a separate empty Queue instance in clean-test only.
+# Production isolated add-on package; intentionally separate from v1 portable manifest.
+# Selected automatically for a production install by the new Switchboard host installer.
+schema: 2
 id: queue
 name: Task Queue
-compose: compose.addon.yaml
-service: tasks
+compose: compose.addon.v2.yaml
+service: queue
+services: queue
+state_dirs: data
+secret_files: admintoken
 mcp_port: 8771
 mcp_path: /mcp
-manager_module: queue
-manager_port: 8767
+# Owned by this add-on; Manager discovers it from the installed manifest.
+ui_title: Queue
+ui_port: 8767
+ui_path: /internal/queue/ui
+ui_secret: admintoken
