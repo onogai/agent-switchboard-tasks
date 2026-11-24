@@ -146,5 +146,6 @@
   "Priority:": "Prioridad:",
   "Available to agents now:": "Disponibles para los agentes ahora:",
   "Total rules:": "Total de reglas:",
-  "No tasks ready right now.": "Ahora mismo no hay tareas listas."
+  "No tasks ready right now.": "Ahora mismo no hay tareas listas.",
+  "Activity": "Actividad"
 }
