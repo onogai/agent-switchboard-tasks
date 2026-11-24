@@ -6,10 +6,13 @@ services:
       dockerfile: Dockerfile
     user: "${HOST_UID:?}:${HOST_GID:?}"
     restart: unless-stopped
-    command: ["python", "-m", "task_queue.runtime"]
+    # TEST-ONLY candidate: intentionally fails after a tiny reversible DB migration.
+    # Never merge this command into the release branch.
+    command: ["python", "-m", "task_queue.lifecycle_failure_probe"]
     environment:
       HOME: /tmp
       QUEUE_DB_PATH: /data/queue.sqlite3
+      LIFECYCLE_PROBE_INSTANCE: "${SWITCHBOARD_ADDON_INSTANCE:?}"
       TASKS_ADMIN_TOKEN: "${SWITCHBOARD_ADDON_SECRET_ADMINTOKEN:?}"
       TASKS_AUTHORITY_URL: http://infrastructure_admin:8768
     volumes:
