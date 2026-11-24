@@ -48,13 +48,10 @@ async def report_task_result(task_id: str, lease_token: str, status: str,
 
 
 async def list_task_rules(is_active: bool | None = None, limit: int = 50, offset: int = 0) -> dict:
-    """List task rules with bounded pagination."""
+    """List task rule metadata only. Use get_task_rule for full instructions."""
     _page(limit, offset)
-    rows = await asyncio.to_thread(admin.list_definitions)
-    if is_active is not None:
-        rows = [row for row in rows if bool(row["is_active"]) == is_active
-                and row["archived_at"] is None]
-    return {"rules": rows[offset:offset + limit]}
+    rows = await asyncio.to_thread(admin.list_definition_summaries, is_active, limit, offset)
+    return {"rules": rows}
 
 
 async def get_task_rule(rule_id: str) -> dict:
@@ -64,10 +61,11 @@ async def get_task_rule(rule_id: str) -> dict:
 
 async def list_task_instances(status: str | None = None, limit: int = 50,
                               offset: int = 0) -> dict:
-    """List task instances with an optional status filter."""
+    """List task instance metadata only. No instructions, results or errors.
+    Use get_task_instance for an explicit diagnostic read, not as agent memory."""
     _page(limit, offset)
-    rows = await asyncio.to_thread(admin.list_instances, None, status)
-    return {"instances": [_public_instance(row) for row in rows[offset:offset + limit]]}
+    rows = await asyncio.to_thread(admin.list_instance_summaries, status, limit, offset)
+    return {"instances": rows}
 
 
 async def get_task_instance(task_id: str) -> dict:
