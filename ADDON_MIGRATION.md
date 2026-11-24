@@ -91,10 +91,27 @@ without printing it or putting it in command arguments.
 
 ## 3. Start the migrated Queue and switch routing
 
-Run from ~/agent-switchboard:
+After copying the production token, **do not use `./switchboard addon start tasks`**.
+The staged container was created with a different generated
+`TASKS_ADMIN_TOKEN` environment value. Docker `start` (and Compose
+`restart`) reuses that stale container environment; the new Queue API will
+reject Manager requests even though the migrated secret file is correct.
+Recreate **only** the stopped add-on Queue container from its existing
+manifest and updated private `config.env`, without rebuilding or touching
+legacy services:
 
-    ./switchboard addon start tasks
+    cd ~/agent-switchboard
+    docker compose -p switchboard-addon-tasks \
+      --project-directory "$PWD/addons/tasks/source" \
+      --env-file "$PWD/addons/tasks/config.env" \
+      -f "$PWD/addons/tasks/source/compose.addon.v2.yaml" \
+      up -d --no-deps --force-recreate --wait queue
     ./switchboard addon cutover tasks --dry-run
+
+Verify the recreated container is healthy, the migrated rule/instance/attempt/
+proposal counts match the source snapshot, and the **actual** Manager API
+authentication succeeds. Avoid printing `docker inspect` environment or
+service tokens; the old Queue must remain stopped.
 
 Verify the real Queue's rule, instance, attempt and proposal counts;
 test the 14 tool names and Manager API authentication. Then cut over:
