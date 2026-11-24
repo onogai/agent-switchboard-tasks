@@ -9,7 +9,8 @@ import unittest
 from task_queue.admin import (QueueAdminError, archive_definition, cancel_instance,
                               create_definition, get_definition, list_instances,
                               list_definitions,
-                              retry_instance, trigger_definition, update_definition)
+                              refresh_pending_snapshots, retry_instance, trigger_definition,
+                              update_definition)
 from task_queue.db import SCHEMA_V1, open_queue_db, transaction
 from task_queue.proposals import (auto_approval_state, decide_proposal, get_proposal,
                                   set_auto_approval, submit_proposal)
@@ -139,6 +140,70 @@ class QueueV2Tests(unittest.TestCase):
         self.assertEqual(len(pending), 1)
         self.assertEqual((pending[0]["scheduled_at"], pending[0]["definition_version"]),
                          (stamp(new_target), 3))
+
+    def test_reschedule_materializes_all_new_future_targets_in_early_window(self):
+        rule = create_definition("Interval", "Old", schedule_kind="interval",
+            interval_minutes=60, interval_anchor_at=stamp(NOW),
+            window_before_minutes=30, db_path=self.path, now=NOW)
+        later = NOW + timedelta(minutes=1)
+        update_definition(rule, {"interval_minutes": 10}, self.path, later)
+        active = [row for row in self.rows(rule, later)
+                  if row["status"] in ("future", "ready")]
+        for minutes in (10, 20, 30, 40):
+            target = stamp(NOW + timedelta(minutes=minutes))
+            self.assertEqual(sum(row["scheduled_at"] == target for row in active), 1)
+        self.assertTrue(all(row["definition_version"] == 2 for row in active))
+
+    def test_reschedule_preserves_coalesced_coverage_when_target_removed(self):
+        rule = create_definition("Merge", "Work", schedule_kind="interval",
+            interval_minutes=10, interval_anchor_at=stamp(NOW), miss_policy="merge_next",
+            max_lateness_minutes=5, db_path=self.path, now=NOW)
+        later = NOW + timedelta(minutes=6)
+        refresh_queue(later, self.path)
+        source = next(row for row in self.rows(rule, later)
+                      if row["scheduled_at"] == stamp(NOW + timedelta(minutes=10)))
+        self.assertEqual(source["coverage_start"], stamp(NOW - timedelta(minutes=10)))
+        update_definition(rule, {"interval_minutes": 20}, self.path, later)
+        rows = self.rows(rule, later)
+        self.assertEqual(next(row for row in rows if row["id"] == source["id"])["status"],
+                         "cancelled")
+        next_run = next(row for row in rows
+                        if row["scheduled_at"] == stamp(NOW + timedelta(minutes=20))
+                        and row["status"] == "future")
+        self.assertEqual(next_run["coverage_start"], source["coverage_start"])
+
+    def test_startup_refresh_repairs_stale_pending_snapshots_idempotently(self):
+        rule = create_definition("Original", "Old", schedule_kind="interval",
+            interval_minutes=10, interval_anchor_at=stamp(NOW),
+            db_path=self.path, now=NOW)
+        leased = claim_next_task(self.path, NOW)["task"]
+        manual = trigger_definition(rule, self.path, NOW)
+        # Simulate the old database: rule changed without refreshing its instances.
+        with open_queue_db(self.path) as db, transaction(db):
+            db.execute("""UPDATE task_definitions SET version=9,title='Current',
+                instructions='New',priority=8,lease_seconds=120,max_attempts=4,
+                window_before_minutes=15 WHERE id=?""", (rule,))
+        before = {row["id"]: row for row in self.rows(rule)}
+        refresh_pending_snapshots(self.path, NOW)
+        after = {row["id"]: row for row in self.rows(rule)}
+        self.assertEqual(before.keys(), after.keys())
+        self.assertEqual(after[leased["task_id"]], before[leased["task_id"]])
+        self.assertEqual(after[manual]["instructions_snapshot"], "New")
+        self.assertEqual(after[manual]["definition_version"], 9)
+        for row in after.values():
+            if row["status"] not in ("future", "ready"):
+                continue
+            self.assertEqual(row["definition_version"], 9)
+            self.assertEqual(row["instructions_snapshot"], "New")
+            self.assertEqual(row["lease_seconds_snapshot"], 120)
+            if row["origin"] == "scheduled":
+                self.assertEqual(row["occurrence_key"], "9:" + row["scheduled_at"])
+                self.assertEqual(row["coverage_start"], before[row["id"]]["coverage_start"])
+                self.assertEqual(row["ready_at"], stamp(
+                    datetime.fromisoformat(row["scheduled_at"]) - timedelta(minutes=15)))
+        refresh_pending_snapshots(self.path, NOW + timedelta(seconds=1))
+        self.assertEqual(after, {row["id"]: row for row in self.rows(rule)})
+        self.assertEqual(claim_next_task(self.path, NOW)["task"]["instructions"], "New")
 
     def test_window_claim_boundaries_are_inclusive(self):
         target = NOW + timedelta(minutes=30)

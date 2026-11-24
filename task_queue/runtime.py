@@ -16,6 +16,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 import uvicorn
 
+from .admin import refresh_pending_snapshots
 from .mcp_server import mcp
 from .scheduler import generate_future
 from .tick import seconds_until_next_hour
@@ -49,6 +50,7 @@ def create_runtime_app() -> Starlette:
     async def lifespan(app: Starlette):
         # FastMCP requires its session-manager lifespan to be driven by the
         # outer ASGI app. Mounted apps do not receive lifespan automatically.
+        await asyncio.to_thread(refresh_pending_snapshots)
         async with mcp_app.lifespan(app):
             scheduler = asyncio.create_task(schedule_forever(), name="queue-scheduler")
             try:
