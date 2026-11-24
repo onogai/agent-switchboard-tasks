@@ -150,3 +150,45 @@ container. Reapprove contracts as required.
 
 Migration is not finished until the production doctor and backup are
 updated to follow the actual live Queue deployment.
+
+## 5. Optional legacy container cleanup after acceptance
+
+Once the **new** managed Queue UI, 14 granted tools, scheduler, backup and
+`production doctor` have passed, the old **stopped** `switchboard-tasks`
+container may be removed. It is not the live Queue and is not required by
+managed production backups. Do **not** use `docker compose down -v`, or
+remove the legacy SQLite state, old `.env.production`, Compose manifest or
+source checkout if reverse migration remains a desired emergency option.
+
+    # Confirm the legacy container is stopped, then remove only that container.
+    test "$(docker inspect -f '{{.State.Running}}' switchboard-tasks)" = false
+    docker rm switchboard-tasks
+
+The test/development Queue under a separate Compose project is unrelated.
+
+### Reverse migration if the legacy container has been removed
+
+The migration helper still intentionally requires the legacy container to
+**exist but be stopped** when `--reverse --commit` runs. Recreate the
+container from the saved old deployment, without starting its scheduler:
+
+    cd ~/agent-switchboard
+    ./switchboard addon stop tasks
+
+    cd ~/agent-switchboard-tasks
+    docker compose -p switchboard-tasks --env-file .env.production \
+      -f compose.production.yaml create --no-build --no-deps tasks
+    docker update --restart=no switchboard-tasks
+
+Then run the `--reverse` preview and confirmed offline copy described in
+section 4 **while both schedulers are stopped**. Only after the copy succeeds
+should the legacy scheduler start. The subsequent Registry handoff
+(`./switchboard addon rollback tasks`) requires that old MCP endpoint to
+be live, and the Manager's legacy Queue routing/UI must also be restored
+separately.
+
+This is an emergency **legacy runtime** rollback, not the preferred routine
+recovery of a healthy managed Queue. For managed-Queue incidents, first
+consider restoring the current managed deployment/state from a verified
+production backup. Do not delete the old checkout, env or state based solely
+on this container cleanup; doing so would retire this reverse-migration path.
