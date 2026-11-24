@@ -49,6 +49,97 @@ class QueueV2Tests(unittest.TestCase):
         self.assertEqual(closed["status"], "future")
         self.assertEqual(closed["ready_at"], stamp(NOW + timedelta(minutes=10)))
 
+    def test_rule_edit_refreshes_all_unstarted_snapshots_and_preserves_history(self):
+        rule = create_definition("Old", "v1", schedule_kind="interval",
+            interval_minutes=10, interval_anchor_at=stamp(NOW),
+            window_before_minutes=10, db_path=self.path, now=NOW - timedelta(minutes=10))
+        finished = claim_next_task(self.path, NOW - timedelta(minutes=10))["task"]
+        report_task_result(finished["task_id"], finished["lease_token"], "succeeded",
+                           result="done", db_path=self.path, now=NOW - timedelta(minutes=10))
+        leased = claim_next_task(self.path, NOW)["task"]
+        manual = trigger_definition(rule, self.path, NOW)
+        before = {row["id"]: row for row in self.rows(rule)}
+        for version in (2, 3):
+            update_definition(rule, {"title": "Current", "instructions": f"v{version}",
+                "priority": 8, "miss_policy": "skip", "lease_seconds": 120,
+                "max_attempts": 4, "max_lateness_minutes": 60},
+                self.path, NOW)
+        after = {row["id"]: row for row in self.rows(rule)}
+        self.assertEqual(before.keys(), after.keys())
+        for task in (finished, leased):
+            self.assertEqual(after[task["task_id"]], before[task["task_id"]])
+        for row in after.values():
+            if row["status"] not in ("future", "ready"):
+                continue
+            self.assertEqual(row["definition_version"], 3)
+            self.assertEqual(row["title_snapshot"], "Current")
+            self.assertEqual(row["instructions_snapshot"], "v3")
+            self.assertEqual(row["priority_snapshot"], 8)
+            self.assertEqual(row["lease_seconds_snapshot"], 120)
+            self.assertEqual(row["max_attempts_snapshot"], 4)
+            if row["origin"] == "scheduled":
+                self.assertEqual(row["occurrence_key"], "3:" + row["scheduled_at"])
+                self.assertEqual(row["miss_policy_snapshot"], "skip")
+                self.assertEqual(row["coverage_start"], before[row["id"]]["coverage_start"])
+                self.assertEqual(row["window_end_at"], stamp(
+                    datetime.fromisoformat(row["scheduled_at"]) + timedelta(minutes=60)))
+        self.assertEqual(after[manual]["miss_policy_snapshot"], "run_late")
+        self.assertIsNone(after[manual]["window_end_at"])
+        claimed = claim_next_task(self.path, NOW)["task"]
+        self.assertEqual(claimed["instructions"], "v3")
+        self.assertEqual(claimed["priority"], 8)
+
+    def test_schedule_edit_keeps_matching_ready_runs_without_repeating_completed_run(self):
+        rule = create_definition("Interval", "Old", schedule_kind="interval",
+            interval_minutes=10, interval_anchor_at=stamp(NOW),
+            window_before_minutes=10, db_path=self.path, now=NOW - timedelta(minutes=10))
+        task = claim_next_task(self.path, NOW - timedelta(minutes=10))["task"]
+        report_task_result(task["task_id"], task["lease_token"], "succeeded",
+                           result="done", db_path=self.path, now=NOW - timedelta(minutes=10))
+        # The 12:00 target finished early. A new 20-minute grid still includes it.
+        update_definition(rule, {"interval_minutes": 20, "instructions": "New"},
+                          self.path, NOW - timedelta(minutes=5))
+        generate_future(NOW, self.path)
+        rows = self.rows(rule)
+        self.assertEqual(len([row for row in rows if row["scheduled_at"] == stamp(NOW)]), 1)
+        active = [row for row in rows if row["status"] in ("ready", "future")]
+        self.assertEqual(len({row["scheduled_at"] for row in active}), len(active))
+        self.assertTrue(all(row["definition_version"] == 2 for row in active))
+        self.assertTrue(all(row["instructions_snapshot"] == "New" for row in active))
+        self.assertTrue(all((datetime.fromisoformat(row["scheduled_at"]) - NOW)
+                            % timedelta(minutes=20) == timedelta(0) for row in active))
+        self.assertIn(stamp(NOW + timedelta(minutes=20)), {row["scheduled_at"] for row in active})
+
+    def test_schedule_edit_preserves_matching_overdue_ready_target(self):
+        rule = create_definition("Backlog", "Old", schedule_kind="interval",
+            interval_minutes=10, interval_anchor_at=stamp(NOW), db_path=self.path, now=NOW)
+        original = next(row for row in self.rows(rule) if row["scheduled_at"] == stamp(NOW))
+        later = NOW + timedelta(minutes=21)
+        update_definition(rule, {"interval_minutes": 20, "instructions": "New"},
+                          self.path, later)
+        row = next(row for row in self.rows(rule, later) if row["id"] == original["id"])
+        self.assertEqual((row["status"], row["definition_version"], row["instructions_snapshot"]),
+                         ("ready", 2, "New"))
+
+    def test_one_shot_edit_updates_snapshot_and_reschedule_replaces_target(self):
+        target = NOW + timedelta(minutes=30)
+        rule = create_definition("Once", "Old", one_shot_at=stamp(target),
+                                 db_path=self.path, now=NOW)
+        original = self.rows(rule)[0]
+        update_definition(rule, {"instructions": "New"}, self.path, NOW)
+        row = self.rows(rule)[0]
+        self.assertEqual((row["id"], row["definition_version"], row["instructions_snapshot"]),
+                         (original["id"], 2, "New"))
+        new_target = target + timedelta(minutes=10)
+        update_definition(rule, {"one_shot_at": stamp(new_target)}, self.path, NOW)
+        rows = self.rows(rule)
+        self.assertEqual(next(row for row in rows if row["id"] == original["id"])["status"],
+                         "cancelled")
+        pending = [row for row in rows if row["status"] in ("future", "ready")]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual((pending[0]["scheduled_at"], pending[0]["definition_version"]),
+                         (stamp(new_target), 3))
+
     def test_window_claim_boundaries_are_inclusive(self):
         target = NOW + timedelta(minutes=30)
         rule = create_definition("Boundary", "Work", one_shot_at=stamp(target),

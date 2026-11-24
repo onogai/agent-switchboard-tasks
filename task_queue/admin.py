@@ -11,7 +11,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .db import open_queue_db, transaction
 from .models import InstanceStatus, MissPolicy, ScheduleKind
 from .scheduler import (_local_occurrence, event, fill_schedule, insert_scheduled,
-                        next_occurrence, parse, reconcile, refresh_queue, stamp, utc, window_for)
+                        next_occurrence, parse, previous_occurrence, reconcile,
+                        refresh_queue, stamp, utc, window_for)
 
 
 class QueueAdminError(ValueError):
@@ -134,7 +135,6 @@ def _initialize_schedule(connection: sqlite3.Connection, rule_id: str,
         if (rule["schedule_kind"] != ScheduleKind.INTERVAL
                 or latest >= parse(rule["interval_anchor_at"])):
             if now <= window_for(rule, latest)[1]:
-                from .scheduler import previous_occurrence
                 insert_scheduled(connection, rule, latest, now,
                                  coverage_start=stamp(previous_occurrence(rule, latest)))
         next_at = next_occurrence(rule, latest)
@@ -253,10 +253,20 @@ def apply_update(connection: sqlite3.Connection, rule_id: str, changes: dict,
         _cancel_unleased(connection, rule_id, now, "rule_paused", True)
     elif schedule_changed:
         for item in connection.execute(
-            """SELECT id FROM task_instances WHERE definition_id=?
+            """SELECT * FROM task_instances WHERE definition_id=?
                AND origin IN ('scheduled','one_shot') AND status IN ('future','ready')
                AND attempt_count=0""", (rule_id,),
         ).fetchall():
+            target = parse(item["scheduled_at"])
+            if item["origin"] == "one_shot":
+                still_scheduled = data["one_shot_at"] == item["scheduled_at"]
+            else:
+                still_scheduled = (data["schedule_kind"] != ScheduleKind.MANUAL
+                    and (data["schedule_kind"] != ScheduleKind.INTERVAL
+                         or target >= parse(data["interval_anchor_at"]))
+                    and _occurrence(data, target) == target)
+            if still_scheduled:
+                continue
             connection.execute(
                 """UPDATE task_instances SET status='cancelled',last_error='schedule_changed',
                    updated_at=? WHERE id=?""", (stamp(now), item["id"]),
@@ -278,30 +288,53 @@ def apply_update(connection: sqlite3.Connection, rule_id: str, changes: dict,
          None if schedule_changed or active != was_active else old["next_scheduled_at"],
          stamp(now), rule_id),
     )
-    if active and not was_active:
-        _initialize_schedule(connection, rule_id, now, resume=True)
-    elif active and schedule_changed:
-        _initialize_schedule(connection, rule_id, now)
-    elif active:
+    # Unstarted triggers use the current rule too, but keep their manual timing
+    # and run_late policy. Retries of previously claimed work retain their snapshot.
+    connection.execute(
+        """UPDATE task_instances SET definition_version=?,title_snapshot=?,
+           instructions_snapshot=?,priority_snapshot=?,lease_seconds_snapshot=?,
+           max_attempts_snapshot=?,updated_at=? WHERE definition_id=?
+           AND origin='manual' AND status IN ('future','ready') AND attempt_count=0""",
+        (old["version"] + 1, data["title"], data["instructions"], data["priority"],
+         data["lease_seconds"], data["max_attempts"], stamp(now), rule_id),
+    )
+    if active:
         for item in connection.execute(
-            """SELECT id,scheduled_at FROM task_instances WHERE definition_id=?
+            """SELECT * FROM task_instances WHERE definition_id=?
                AND origin IN ('scheduled','one_shot') AND status IN ('future','ready')
                AND attempt_count=0""", (rule_id,),
         ).fetchall():
-            start, end = window_for(data, parse(item["scheduled_at"]))
+            target = parse(item["scheduled_at"])
+            start, end = window_for(data, target)
+            coverage_start = item["coverage_start"]
+            if schedule_changed and item["origin"] == "scheduled":
+                # Recompute the regular interval, retaining any coalesced coverage.
+                previous = stamp(previous_occurrence(data, target))
+                old_previous = stamp(previous_occurrence(old, target))
+                coverage_start = (min(previous, coverage_start)
+                                  if coverage_start and coverage_start < old_previous
+                                  else previous)
+            version = old["version"] + 1
             connection.execute(
-                """UPDATE task_instances SET title_snapshot=?,instructions_snapshot=?,
-                   priority_snapshot=?,miss_policy_snapshot=?,lease_seconds_snapshot=?,
-                   max_attempts_snapshot=?,window_start_at=?,window_end_at=?,ready_at=?,
+                """UPDATE task_instances SET definition_version=?,occurrence_key=?,
+                   title_snapshot=?,instructions_snapshot=?,priority_snapshot=?,
+                   miss_policy_snapshot=?,lease_seconds_snapshot=?,max_attempts_snapshot=?,
+                   window_start_at=?,window_end_at=?,ready_at=?,coverage_start=?,
                    status=?,updated_at=? WHERE id=?""",
-                (data["title"], data["instructions"], data["priority"],
-                 data["miss_policy"], data["lease_seconds"], data["max_attempts"],
-                 stamp(start), stamp(end), stamp(start),
-                 "ready" if start <= now else "future", stamp(now), item["id"]),
+                (version, f'{version}:{stamp(target)}', data["title"], data["instructions"],
+                 data["priority"], data["miss_policy"], data["lease_seconds"],
+                 data["max_attempts"], stamp(start), stamp(end), stamp(start),
+                 coverage_start, "ready" if start <= now else "future",
+                 stamp(now), item["id"]),
             )
-        if data["window_before_minutes"] != old["window_before_minutes"]:
-            fill_schedule(connection, now, rule_id)
-        reconcile(connection, now)
+        if not was_active:
+            _initialize_schedule(connection, rule_id, now, resume=True)
+        elif schedule_changed:
+            _initialize_schedule(connection, rule_id, now)
+        else:
+            if data["window_before_minutes"] != old["window_before_minutes"]:
+                fill_schedule(connection, now, rule_id)
+            reconcile(connection, now)
     event(connection, "definition", rule_id,
           "paused" if not active and was_active else "resumed" if active and not was_active
           else "updated", now, actor="admin")

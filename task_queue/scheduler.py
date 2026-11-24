@@ -235,11 +235,15 @@ def insert_scheduled(connection: sqlite3.Connection, definition: sqlite3.Row,
                      target: datetime, now: datetime, *, origin: str = "scheduled",
                      coverage_start: str | None = None) -> str | None:
     start, end = window_for(definition, target)
-    # A lease or queued retry from an older rule version owns this target.
+    # A target already materialized or handled must not run again merely because
+    # the definition changed. Only scheduler-invalidated, unstarted cancellations
+    # can be materialized again (e.g. after resuming or moving a schedule back).
     existing = connection.execute(
         """SELECT id FROM task_instances WHERE definition_id=? AND scheduled_at=?
            AND origin IN ('scheduled','one_shot')
-           AND status IN ('future','ready','leased') LIMIT 1""",
+           AND NOT (status='cancelled' AND attempt_count=0
+                    AND COALESCE(last_error, '') IN ('rule_paused','schedule_changed'))
+           LIMIT 1""",
         (definition["id"], stamp(target)),
     ).fetchone()
     if existing:
