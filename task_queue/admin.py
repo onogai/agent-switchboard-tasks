@@ -462,6 +462,44 @@ def list_instances(db_path: Path | None = None, status: str | None = None,
         return [dict(row) for row in connection.execute(query, (status,) if status else ()).fetchall()]
 
 
+def list_definition_summaries(is_active: bool | None, limit: int, offset: int,
+                              db_path: Path | None = None) -> list[dict]:
+    """MCP catalog: metadata only; never load instruction bodies."""
+    query = """SELECT d.id,d.title,d.is_active,d.priority,d.schedule_kind,
+                      d.interval_minutes,d.daily_time_local,d.timezone,d.one_shot_at,
+                      d.archived_at,d.version,d.next_scheduled_at,
+                      (SELECT MIN(i.scheduled_at) FROM task_instances i
+                       WHERE i.definition_id=d.id
+                         AND i.status IN ('future','ready','leased')) AS next_visible_at
+               FROM task_definitions d"""
+    params: list = []
+    if is_active is not None:
+        query += " WHERE d.is_active=? AND d.archived_at IS NULL"
+        params.append(int(is_active))
+    query += " ORDER BY d.priority DESC,d.title,d.id LIMIT ? OFFSET ?"
+    with open_queue_db(db_path) as connection:
+        return [dict(row) for row in connection.execute(query, (*params, limit, offset))]
+
+
+def list_instance_summaries(status: str | None, limit: int, offset: int,
+                            db_path: Path | None = None,
+                            now: datetime | None = None) -> list[dict]:
+    """MCP catalog: metadata only; never load prompts, results or errors."""
+    if status is not None and status not in {item.value for item in InstanceStatus}:
+        raise QueueAdminError("Unknown instance status.")
+    refresh_queue(now, db_path)
+    query = """SELECT id,definition_id,definition_version,title_snapshot,status,
+                      scheduled_at,coverage_start,coverage_end,attempt_count
+               FROM task_instances"""
+    params: list = []
+    if status is not None:
+        query += " WHERE status=?"
+        params.append(status)
+    query += " ORDER BY scheduled_at DESC,id DESC LIMIT ? OFFSET ?"
+    with open_queue_db(db_path) as connection:
+        return [dict(row) for row in connection.execute(query, (*params, limit, offset))]
+
+
 def get_instance(task_id: str, db_path: Path | None = None) -> dict:
     with open_queue_db(db_path) as connection:
         row = connection.execute("SELECT * FROM task_instances WHERE id=?", (task_id,)).fetchone()
