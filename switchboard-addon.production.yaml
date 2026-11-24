@@ -12,7 +12,7 @@ secret_files: admintoken
 mcp_port: 8771
 mcp_path: /mcp
 # Owned by this add-on; Manager discovers it from the installed manifest.
-ui_title: Queue
+ui_title: Tasks
 ui_port: 8767
 ui_path: /internal/queue/ui
 ui_secret: admintoken
