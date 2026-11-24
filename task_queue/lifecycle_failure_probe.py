@@ -10,6 +10,7 @@ Never merge this test module or Compose command into the release branch.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
@@ -46,7 +47,7 @@ def main() -> int:
               file=sys.stderr, flush=True)
         return 65
 
-    with sqlite3.connect(db_path, timeout=15) as conn:
+    with closing(sqlite3.connect(db_path, timeout=15)) as conn:
         current = conn.execute("PRAGMA user_version").fetchone()[0]
         if current not in (2, 3):
             print("LIFECYCLE_PROBE: unexpected schema version; no changes",
