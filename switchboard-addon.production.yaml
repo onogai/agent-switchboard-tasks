@@ -3,6 +3,7 @@
 schema: 2
 id: queue
 name: Task Queue
+icon: assets/icon.svg
 compose: compose.addon.v2.yaml
 service: queue
 services: queue

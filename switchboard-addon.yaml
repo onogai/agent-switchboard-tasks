@@ -3,6 +3,7 @@
 schema: 1
 id: queue
 name: Task Queue
+icon: assets/icon.svg
 compose: compose.addon.yaml
 service: tasks
 mcp_port: 8771
