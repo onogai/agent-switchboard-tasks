@@ -157,5 +157,6 @@
   "Priority:": "Пріоритет:",
   "Available to agents now:": "Доступно агентам зараз:",
   "Total rules:": "Усього правил:",
-  "No tasks ready right now.": "Зараз немає готових задач."
+  "No tasks ready right now.": "Зараз немає готових задач.",
+  "Activity": "Активність"
 }
