@@ -14,7 +14,7 @@ import {
   RuleRounded, TimelineRounded,
 } from '@mui/icons-material'
 import { api, clearCsrf } from './api'
-import { queueLayout } from './layoutMode'
+import { queueLayout, queueMount } from './layoutMode'
 import { LanguageSwitcher } from './LanguageSwitcher'
 import { tx, languageTag } from './i18n'
 import type { Definition, DefinitionInput, Instance, MissPolicy, Proposal, ScheduleKind, Status } from './types'
@@ -288,7 +288,7 @@ function TaskPage() {
   try { if (result) result = JSON.parse(result) } catch { /* Show original text. */ }
   return <>
     <Button component={RouterLink} to="/queue" startIcon={<ArrowBackRounded />} sx={{ mb: 2 }}>Back to queue</Button>
-    <PageTitle title={task.title_snapshot} rawTitle description={`Task ${task.id}`} action={<Stack direction="row" gap={1}><StatusChip status={task.status} />{managedQueue && embeddedQueue && <Tooltip title={tx('Activity')}><IconButton aria-label={tx('Activity')} size="small" onClick={() => window.parent.postMessage({ type: 'switchboard:task-activity', task_id: task.id }, window.location.origin)}><TimelineRounded fontSize="small" /></IconButton></Tooltip>}{(['future', 'ready', 'leased'] as Status[]).includes(task.status) && <ConfirmButton label="Cancel" color="error" message="Cancel this task instance? An agent holding a lease may already be working." onConfirm={() => cancel.mutate()} />}{(['failed', 'cancelled'] as Status[]).includes(task.status) && rule.data?.definition.is_active && !rule.data.definition.archived_at && <Button variant="outlined" onClick={() => retry.mutate()}>Retry</Button>}</Stack>} />
+    <PageTitle title={task.title_snapshot} rawTitle description={`Task ${task.id}`} action={<Stack direction="row" gap={1}><StatusChip status={task.status} />{embeddedQueue && queueMount(window.location.pathname) === '/admin/addon-ui/tasks' && <Tooltip title={tx('Activity')}><IconButton aria-label={tx('Activity')} size="small" onClick={() => window.parent.postMessage({ type: 'switchboard:task-activity', task_id: task.id }, window.location.origin)}><TimelineRounded fontSize="small" /></IconButton></Tooltip>}{(['future', 'ready', 'leased'] as Status[]).includes(task.status) && <ConfirmButton label="Cancel" color="error" message="Cancel this task instance? An agent holding a lease may already be working." onConfirm={() => cancel.mutate()} />}{(['failed', 'cancelled'] as Status[]).includes(task.status) && rule.data?.definition.is_active && !rule.data.definition.archived_at && <Button variant="outlined" onClick={() => retry.mutate()}>Retry</Button>}</Stack>} />
     {error && <ErrorBox error={new Error(error)} />}
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(0,2fr) minmax(300px,1fr)' }, gap: 3 }}>
       <Stack gap={3}><Card><CardContent sx={{ p: 3 }}><Typography variant="h6" fontWeight={700} gutterBottom>Agent instructions</Typography><Typography sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{task.instructions_snapshot}</Typography></CardContent></Card>
