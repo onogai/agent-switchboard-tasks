@@ -32,12 +32,13 @@ def authority_valid(version: int) -> bool:
     """Fail closed. Never take the local/standalone PIN path on auth failure."""
     url = os.environ.get("TASKS_AUTHORITY_URL", "")
     token = os.environ.get("TASKS_ADMIN_TOKEN", "")
-    if (not url or not url.startswith(("http://", "https://")) or
+    instance = os.environ.get("SWITCHBOARD_ADDON_INSTANCE", "")
+    if (not re.fullmatch(r"[a-z][a-z0-9-]{0,29}", instance) or not url or not url.startswith(("http://", "https://")) or
             not token or len(token) < 32 or token.startswith("CHANGE_ME")):
         return False
     try:
         response = httpx.post(
-            url.rstrip("/") + "/admin/internal/queue/validate-pin-version",
+            url.rstrip("/") + f"/admin/internal/addons/{instance}/validate-pin-version",
             headers={"Authorization": "Bearer " + token},
             json={"pin_version": version},
             timeout=2.0,

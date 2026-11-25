@@ -12,6 +12,7 @@ services:
       QUEUE_DB_PATH: /data/queue.sqlite3
       TASKS_ADMIN_TOKEN: "${SWITCHBOARD_ADDON_SECRET_ADMINTOKEN:?}"
       TASKS_AUTHORITY_URL: http://infrastructure_admin:8768
+      SWITCHBOARD_ADDON_INSTANCE: "${SWITCHBOARD_ADDON_INSTANCE:?}"
     volumes:
       - "${SWITCHBOARD_ADDON_STATE:?}/data:/data"
     networks:
