@@ -4,11 +4,11 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from starlette.testclient import TestClient
 
-from task_queue.managed_approval import managed_session, auto_approval_authorized
+from task_queue.managed_approval import managed_session, auto_approval_authorized, authority_valid
 from task_queue.proposals import auto_approval_state, set_auto_approval, submit_proposal
 from task_queue.web import WebConfig, create_app
 
@@ -91,10 +91,35 @@ class ManagedEpochTests(unittest.TestCase):
             self.assertEqual(self._propose("managed")["status"], "pending")
             self.assertFalse(auto_approval_state(self.db)["enabled"])
 
+    def test_instance_scoped_authority_uses_existing_addon_token(self):
+        with patch.dict(os.environ, {
+                "TASKS_ADMIN_TOKEN": self.TOKEN,
+                "TASKS_AUTHORITY_URL": "http://infrastructure_admin:8768",
+                "SWITCHBOARD_ADDON_INSTANCE": "tasks-dev"}, clear=True), \
+             patch("task_queue.managed_approval.httpx.post",
+                   return_value=Mock(status_code=200, json=lambda: {"valid": True})) as post:
+            self.assertTrue(authority_valid(7))
+            post.assert_called_once_with(
+                "http://infrastructure_admin:8768/admin/internal/addons/tasks-dev/validate-pin-version",
+                headers={"Authorization": "Bearer " + self.TOKEN},
+                json={"pin_version": 7}, timeout=2.0, follow_redirects=False)
+
+    def test_missing_or_unsafe_instance_fails_without_network_or_fallback(self):
+        for instance in ("", "../tasks", "other/secret", "Tasks"):
+            with self.subTest(instance=instance), patch.dict(os.environ, {
+                    "TASKS_ADMIN_TOKEN": self.TOKEN,
+                    "TASKS_AUTHORITY_URL": "http://infrastructure_admin:8768",
+                    "SWITCHBOARD_ADDON_INSTANCE": instance}, clear=True), \
+                 patch("task_queue.managed_approval.httpx.post") as post:
+                self.assertFalse(authority_valid(7))
+                self.assertFalse(auto_approval_authorized(managed_session(self.SESSION, 7)))
+                post.assert_not_called()
+
     def test_unreachable_authority_never_falls_back_to_standalone(self):
         with patch.dict(os.environ, {
                 "TASKS_ADMIN_TOKEN": self.TOKEN,
-                "TASKS_AUTHORITY_URL": "http://127.0.0.1:1"}):
+                "TASKS_AUTHORITY_URL": "http://127.0.0.1:1",
+                "SWITCHBOARD_ADDON_INSTANCE": "tasks"}):
             self.assertFalse(auto_approval_authorized(managed_session(self.SESSION, 7)))
             self.assertFalse(auto_approval_authorized("managed:v7:bad-session"))
 
