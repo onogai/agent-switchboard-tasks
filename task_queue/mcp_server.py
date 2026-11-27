@@ -10,6 +10,7 @@ import asyncio
 import os
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from . import admin, proposals, service
@@ -94,9 +95,11 @@ async def propose_create_task_rule(rule: CreateRule, idempotency_key: Idempotenc
     One-shot: schedule_kind="one_shot", one_shot_at with UTC offset.
     Omit optional settings to use defaults. Use a new idempotency key per distinct proposal.
     """
-    return await asyncio.to_thread(proposals.submit_proposal, "create_rule",
-                                   rule.model_dump(exclude_unset=True), None,
-                                   None, _proposer(), idempotency_key)
+    try:
+        return await asyncio.to_thread(proposals.submit_proposal, "create_rule", rule, None,
+                                       None, _proposer(), idempotency_key)
+    except admin.QueueAdminError as exc:
+        raise ToolError(str(exc)) from exc
 
 
 async def propose_update_task_rule(rule_id: str, changes: RuleChanges,
@@ -108,9 +111,11 @@ async def propose_update_task_rule(rule_id: str, changes: RuleChanges,
     kind, clear incompatible old timing fields with null and supply the new timing fields.
     Use a new idempotency key per distinct edit. Check returned proposal status.
     """
-    return await asyncio.to_thread(proposals.submit_proposal, "update_rule",
-                                   changes.model_dump(exclude_unset=True),
-                                   rule_id, expected_version, _proposer(), idempotency_key)
+    try:
+        return await asyncio.to_thread(proposals.submit_proposal, "update_rule", changes,
+                                       rule_id, expected_version, _proposer(), idempotency_key)
+    except admin.QueueAdminError as exc:
+        raise ToolError(str(exc)) from exc
 
 
 async def propose_archive_task_rule(rule_id: str, expected_version: int,

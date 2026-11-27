@@ -1,105 +1,159 @@
-"""Agent-facing rule contract: discoverable schema and real proposal round trips."""
-import asyncio
-import json
+"""Agent-facing rule contract: real MCP requests against disposable storage."""
 import os
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from pydantic import ValidationError
+from fastmcp import Client
+from jsonschema import Draft202012Validator
 
 from task_queue import admin, mcp_server, proposals
-from task_queue.rule_inputs import CreateRule, RuleChanges
+from task_queue.models import RULE_CREATE_DEFAULTS
 
 
-class RuleMcpContractTest(unittest.TestCase):
-    def test_schema_contains_fields_defaults_and_constraints(self):
-        tools = {tool.name: tool for tool in asyncio.run(mcp_server.mcp.list_tools())}
+class RuleMcpContractTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        env = patch.dict(os.environ, {"QUEUE_DB_PATH": str(Path(tmp.name) / "queue.sqlite3")})
+        env.start()
+        self.addCleanup(env.stop)
+
+    async def test_schema_contains_fields_defaults_and_constraints(self):
+        async with Client(mcp_server.mcp) as client:
+            tools = {tool.name: tool for tool in await client.list_tools()}
         for name, argument in (("propose_create_task_rule", "rule"),
                                ("propose_update_task_rule", "changes")):
-            schema = tools[name].parameters
+            schema = tools[name].inputSchema
+            Draft202012Validator.check_schema(schema)
             nested = schema["properties"][argument]
             if "$ref" in nested:
                 nested = schema["$defs"][nested["$ref"].rsplit("/", 1)[-1]]
             fields = nested["properties"]
             self.assertFalse(nested["additionalProperties"])
-            self.assertEqual(fields["priority"]["default"], 5)
             self.assertEqual(fields["priority"]["maximum"], 9)
             self.assertEqual(fields["max_lateness_minutes"]["minimum"], 0)
             self.assertIn("daily", fields["schedule_kind"]["enum"])
             self.assertIn("timezone", fields)
             self.assertTrue(fields["timezone_name"]["deprecated"])
             self.assertTrue(fields["window_after_minutes"]["deprecated"])
+            validator = Draft202012Validator(schema)
             if argument == "rule":
                 self.assertEqual(set(nested["required"]), {"title", "instructions"})
                 self.assertNotIn("is_active", fields)
+                for key, value in RULE_CREATE_DEFAULTS.items():
+                    self.assertEqual(fields["timezone" if key == "timezone_name" else key]["default"], value)
+                base = {"title": "Task", "instructions": "Run"}
+                self.assertTrue(validator.is_valid({"rule": base, "idempotency_key": "key"}))
+                self.assertFalse(validator.is_valid({"rule": {**base, "window_after_minutes": None},
+                                                     "idempotency_key": "key"}))
             else:
                 self.assertIn("is_active", fields)
                 self.assertFalse(nested.get("required"))
+                self.assertEqual(nested["minProperties"], 1)
+                self.assertFalse(any("default" in field for field in fields.values()))
+                base = {"rule_id": "id", "expected_version": 1, "idempotency_key": "key"}
+                self.assertFalse(validator.is_valid({**base, "changes": {}}))
+                for key in ("title", "instructions", "is_active", "priority", "window_after_minutes"):
+                    self.assertFalse(validator.is_valid({**base, "changes": {key: None}}))
+                self.assertTrue(validator.is_valid({**base, "changes": {"timezone": None}}))
 
-    def test_daily_create_and_partial_update(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
-                "QUEUE_DB_PATH": str(Path(tmp) / "queue.sqlite3")}):
-            rule = CreateRule(title="Daily", instructions="Send a summary",
-                              schedule_kind="daily", daily_time_local="08:00",
-                              timezone="Europe/Madrid")
-            proposal = asyncio.run(mcp_server.propose_create_task_rule(rule, "daily"))
+    async def test_daily_create_and_partial_update(self):
+        async with Client(mcp_server.mcp) as client:
+            rule = dict(title="Daily", instructions="Send a summary", schedule_kind="daily",
+                        daily_time_local="08:00", timezone="Europe/Madrid", priority=8)
+            result = await client.call_tool("propose_create_task_rule",
+                                            {"rule": rule, "idempotency_key": "daily"})
+            proposal = result.structured_content
             self.assertEqual(proposal["status"], "pending")
             approved = proposals.decide_proposal(proposal["id"], True, "reviewer")
             self.assertEqual(approved["status"], "approved")
             rule_id = approved["result"]["id"]
-            before = asyncio.run(mcp_server.get_task_rule(rule_id))["definition"]
+
+            async def read():
+                result = await client.call_tool("get_task_rule", {"rule_id": rule_id})
+                return result.structured_content["definition"]
+
+            async def edit(before, changes, key):
+                result = await client.call_tool("propose_update_task_rule", {
+                    "rule_id": rule_id, "changes": changes,
+                    "expected_version": before["version"], "idempotency_key": key})
+                proposal = result.structured_content
+                self.assertEqual(proposal["status"], "pending")
+                self.assertEqual(proposals.decide_proposal(proposal["id"], True, "reviewer")["status"],
+                                 "approved")
+                return proposal
+
+            before = await read()
             self.assertEqual(before["timezone"], "Europe/Madrid")
             self.assertIs(before["is_active"], True)
             self.assertEqual(before["max_lateness_minutes"], 30)
-            changes = RuleChanges(is_active=False, daily_time_local="09:00")
-            edit = asyncio.run(mcp_server.propose_update_task_rule(
-                rule_id, changes, before["version"], "edit"))
-            self.assertEqual(edit["payload"], {"is_active": False, "daily_time_local": "09:00"})
-            self.assertEqual(proposals.decide_proposal(edit["id"], True, "reviewer")["status"], "approved")
-            after = asyncio.run(mcp_server.get_task_rule(rule_id))["definition"]
+            await edit(before, {"is_active": False}, "pause")
+            paused = await read()
+            edit_proposal = await edit(paused, {"daily_time_local": "09:00"}, "edit")
+            self.assertEqual(edit_proposal["payload"], {"daily_time_local": "09:00"})
+            after = await read()
             self.assertEqual(after["daily_time_local"], "09:00")
             self.assertEqual(after["timezone"], before["timezone"])
             self.assertEqual(after["instructions"], before["instructions"])
+            self.assertEqual(after["priority"], 8)
+            self.assertEqual(after["schedule_kind"], "daily")
             self.assertIs(after["is_active"], False)
-            switch = RuleChanges(schedule_kind="interval", interval_minutes=60,
-                                 daily_time_local=None, timezone=None)
-            edit = asyncio.run(mcp_server.propose_update_task_rule(
-                rule_id, switch, after["version"], "switch"))
-            self.assertEqual(proposals.decide_proposal(edit["id"], True, "reviewer")["status"], "approved")
-            switched = asyncio.run(mcp_server.get_task_rule(rule_id))["definition"]
+            await edit(after, {"schedule_kind": "interval", "interval_minutes": 60,
+                               "daily_time_local": None, "timezone": None}, "switch")
+            switched = await read()
             self.assertEqual(switched["interval_minutes"], 60)
             self.assertIsNone(switched["timezone"])
+            self.assertIs(switched["is_active"], False)
 
-    def test_legacy_aliases_same_proposal_and_conflicts(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
-                "QUEUE_DB_PATH": str(Path(tmp) / "queue.sqlite3")}):
+    async def test_legacy_aliases_same_proposal_and_conflicts(self):
+        async with Client(mcp_server.mcp) as client:
             common = dict(title="Daily", instructions="Run", schedule_kind="daily",
                           daily_time_local="08:00")
-            legacy = CreateRule(**common, timezone_name="Europe/Madrid", window_after_minutes=45)
-            canonical = CreateRule(**common, timezone="Europe/Madrid", max_lateness_minutes=45)
-            first = asyncio.run(mcp_server.propose_create_task_rule(legacy, "same"))
-            second = asyncio.run(mcp_server.propose_create_task_rule(canonical, "same"))
-            self.assertEqual(first["id"], second["id"])
-            with self.assertRaisesRegex(ValidationError, "timezone.*disagree"):
-                CreateRule(**common, timezone="UTC", timezone_name="Europe/Madrid")
-            with self.assertRaisesRegex(ValidationError, "max_lateness_minutes.*disagree"):
-                RuleChanges(max_lateness_minutes=5, window_after_minutes=10)
+            legacy = dict(common, timezone_name="Europe/Madrid", window_after_minutes=45)
+            canonical = dict(common, timezone="Europe/Madrid", max_lateness_minutes=45)
+            first = await client.call_tool("propose_create_task_rule",
+                                           {"rule": legacy, "idempotency_key": "same"})
+            second = await client.call_tool("propose_create_task_rule",
+                                            {"rule": canonical, "idempotency_key": "same"})
+            self.assertEqual(first.structured_content["id"], second.structured_content["id"])
+            for conflict, message in (
+                (dict(canonical, timezone_name="UTC"), "timezone"),
+                (dict(canonical, window_after_minutes=10), "max_lateness_minutes"),
+            ):
+                result = await client.call_tool("propose_create_task_rule",
+                    {"rule": conflict, "idempotency_key": "bad"}, raise_on_error=False)
+                self.assertTrue(result.is_error)
+                self.assertIn(message, str(result.content))
+                self.assertIn("disagree", str(result.content))
 
-    def test_validation_names_offending_fields(self):
-        with self.assertRaisesRegex(ValidationError, "is_active"):
-            CreateRule(title="Task", instructions="Run", is_active=False)
-        with self.assertRaisesRegex(ValidationError, "priority"):
-            RuleChanges(priority=10)
-        with self.assertRaisesRegex(ValidationError, "title"):
-            RuleChanges(title=None)
-        with self.assertRaisesRegex(ValidationError, "at least one field"):
-            RuleChanges()
-        with self.assertRaisesRegex(admin.QueueAdminError, "IANA timezone"):
-            asyncio.run(mcp_server.propose_create_task_rule(
-                CreateRule(title="Task", instructions="Run", schedule_kind="daily",
-                           daily_time_local="08:00", timezone="Not/AZone"), "bad"))
+    async def test_validation_names_offending_fields(self):
+        async with Client(mcp_server.mcp) as client:
+            common = {"title": "Task", "instructions": "Run"}
+            for rule, expected in (
+                ({**common, "is_active": False}, "is_active"),
+                ({**common, "priority": 10}, "priority"),
+                ({**common, "window_after_minutes": None}, "window_after_minutes"),
+                ({"instructions": "Run"}, "title"),
+                ({**common, "schedule_kind": "daily", "daily_time_local": "08:00",
+                  "timezone": "Not/AZone"}, "IANA timezone"),
+                ({**common, "schedule_kind": "interval"}, "positive number of minutes"),
+            ):
+                result = await client.call_tool("propose_create_task_rule",
+                    {"rule": rule, "idempotency_key": "bad"}, raise_on_error=False)
+                self.assertTrue(result.is_error)
+                self.assertIn(expected, str(result.content))
+            for changes, expected in (({}, "at least one field"), ({"title": None}, "title"),
+                                      ({"is_active": None}, "is_active")):
+                result = await client.call_tool("propose_update_task_rule", {
+                    "rule_id": "unused", "expected_version": 1, "changes": changes,
+                    "idempotency_key": "bad"}, raise_on_error=False)
+                self.assertTrue(result.is_error)
+                self.assertIn(expected, str(result.content))
+            self.assertEqual(proposals.list_proposals(), [])
+
+    def test_direct_proposal_unknown_fields(self):
         with self.assertRaisesRegex(admin.QueueAdminError, "Unknown fields: typo"):
             proposals.submit_proposal("create_rule", {"title": "Task", "instructions": "Run",
                 "typo": True}, None, None, "agent", "bad")

@@ -11,6 +11,7 @@ from uuid import uuid4
 from .admin import (QueueAdminError, _settings, apply_archive, apply_cancel,
                     apply_create, apply_retry, apply_trigger, apply_update)
 from .db import open_queue_db, transaction
+from .models import RULE_CREATE_DEFAULTS
 from .scheduler import parse, stamp, utc
 
 OPERATIONS = {"create_rule", "update_rule", "archive_rule", "run_rule",
@@ -148,14 +149,8 @@ def submit_proposal(operation: str, payload: dict, target_id: str | None,
     if operation == "create_rule":
         if target_id is not None or expected_version is not None:
             raise QueueAdminError("Create proposal cannot name an existing rule.")
-        defaults = {"schedule_kind": "manual", "priority": 5,
-                    "miss_policy": "run_late", "max_lateness_minutes": 30,
-                    "window_before_minutes": 0, "lease_seconds": 1800,
-                    "max_attempts": 3, "interval_minutes": None,
-                    "interval_anchor_at": None, "daily_time_local": None,
-                    "timezone_name": None, "one_shot_at": None}
         required = {"title", "instructions"}
-        unknown = set(payload) - defaults.keys() - required
+        unknown = set(payload) - RULE_CREATE_DEFAULTS.keys() - required
         missing = required - payload.keys()
         if unknown or missing:
             details = []
@@ -166,17 +161,14 @@ def submit_proposal(operation: str, payload: dict, target_id: str | None,
             if "is_active" in unknown:
                 details.append("New rules are active; use update_rule to pause")
             raise QueueAdminError("; ".join(details))
-        payload = {**defaults, **payload}
+        payload = {**RULE_CREATE_DEFAULTS, **payload}
         _settings(now=now, **payload)
     elif operation in RULE_OPERATIONS:
         if not target_id or type(expected_version) is not int or expected_version <= 0:
             raise QueueAdminError("Rule target and expected_version are required.")
         if operation == "update_rule":
-            unknown = set(payload) - {
-                "title", "instructions", "schedule_kind", "priority", "miss_policy",
-                "max_lateness_minutes", "window_before_minutes", "lease_seconds",
-                "max_attempts", "interval_minutes", "interval_anchor_at", "daily_time_local",
-                "timezone_name", "one_shot_at", "is_active"}
+            unknown = set(payload) - RULE_CREATE_DEFAULTS.keys() - {
+                "title", "instructions", "is_active"}
             if unknown:
                 raise QueueAdminError("Unknown update fields: " + ", ".join(sorted(unknown)))
             if not payload:
