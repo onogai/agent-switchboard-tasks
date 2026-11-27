@@ -98,6 +98,9 @@ export interface DefinitionInput {
 export interface Proposal {
   id: string
   operation: string
+  target_title?: string
+  summary?: string
+  impact_summary?: string | null
   target_id: string | null
   payload: Record<string, unknown>
   expected_version: number | null

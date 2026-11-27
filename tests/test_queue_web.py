@@ -108,6 +108,25 @@ class QueueWebTests(unittest.TestCase):
         self.assertEqual(self.write("/queue/api/auto-approval", {"enabled": False}).json()["enabled"],
                          False)
 
+    def test_review_proposals_count_and_summary(self):
+        for index in range(3):
+            submit_proposal("create_rule", {"title": f"Review {index}", "instructions": "Work"},
+                            None, None, "agent", f"count-{index}", self.path)
+        base = "/queue/api/proposals?status=pending"
+        self.assertEqual(self.client.get(base + "&count_only=1").json(), {"total": 3})
+        page = self.client.get(base + "&limit=1").json()
+        self.assertEqual(page["total"], 3)
+        self.assertEqual(len(page["proposals"]), 1)
+        proposal = page["proposals"][0]
+        self.assertTrue(proposal["target_title"].startswith("Review "))
+        self.assertIn("Create rule", proposal["summary"])
+        self.assertIn("scheduled runs", proposal["impact_summary"])
+        next_page = self.client.get(base + "&limit=1&offset=1").json()
+        self.assertNotEqual(next_page["proposals"][0]["id"], proposal["id"])
+        self.assertEqual(self.write(f"/queue/api/proposals/{proposal['id']}/reject").json()["status"], "rejected")
+        self.assertEqual(self.client.get(base + "&count_only=1").json(), {"total": 2})
+        self.assertEqual(self.client.get(base + "&limit=101").status_code, 400)
+
     def test_csrf_and_validation(self):
         path = "/queue/api/definitions"
         bad = self.client.post(path, json={"title": "No", "instructions": "Run"})

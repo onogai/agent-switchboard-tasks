@@ -23,7 +23,7 @@ from .admin import (QueueAdminError, archive_definition, cancel_instance, create
                          retry_instance, trigger_definition, update_definition)
 from .models import InstanceStatus
 from .proposals import (auto_approval_state, decide_proposal, get_proposal,
-                        list_proposals, set_auto_approval)
+                        review_proposals, set_auto_approval)
 from .scheduler import parse
 from .web_auth import pin_version, verify_pin
 
@@ -326,9 +326,10 @@ async def proposals(request: Request) -> Response:
     try:
         limit = int(request.query_params.get("limit", "50"))
         offset = int(request.query_params.get("offset", "0"))
-        rows = await asyncio.to_thread(list_proposals, request.app.state.config.db_path,
-                                       request.query_params.get("status"), limit, offset)
-        return reply({"proposals": rows})
+        result = await asyncio.to_thread(review_proposals, request.app.state.config.db_path,
+                                         request.query_params.get("status"), limit, offset,
+                                         request.query_params.get("count_only") == "1")
+        return reply(result)
     except (ValueError, QueueAdminError) as exc:
         return reply({"error": str(exc)}, 400)
 

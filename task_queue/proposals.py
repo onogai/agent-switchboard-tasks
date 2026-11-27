@@ -307,6 +307,110 @@ def list_proposals(db_path: Path | None = None, status: str | None = None,
         return [_view(connection, row) for row in connection.execute(query, params).fetchall()]
 
 
+def _review_presentation(connection: sqlite3.Connection, data: dict) -> dict:
+    """HTTP review copy only; never changes a proposal or its decision."""
+    operation, payload = data["operation"], data["payload"]
+    target = data["target_id"]
+    rule = None
+    if operation == "create_rule":
+        title = payload.get("title")
+    elif operation in RULE_OPERATIONS:
+        rule = connection.execute("SELECT * FROM task_definitions WHERE id=?", (target,)).fetchone()
+        title = rule["title"] if rule else payload.get("title")
+    else:
+        instance = connection.execute("SELECT title_snapshot FROM task_instances WHERE id=?", (target,)).fetchone()
+        title = instance["title_snapshot"] if instance else None
+
+    def short(value):
+        if value is None:
+            return "—"
+        text = str(value)
+        return text if len(text) <= 80 else text[:77] + "..."
+
+    labels = {"title": "title", "instructions": "instructions", "group": "group",
+              "is_active": "active state", "schedule_kind": "schedule type",
+              "interval_minutes": "interval (minutes)", "interval_anchor_at": "interval anchor",
+              "daily_time_local": "daily time", "timezone_name": "time zone",
+              "one_shot_at": "one-shot time", "priority": "priority",
+              "miss_policy": "missed-run policy", "max_lateness_minutes": "late window (minutes)",
+              "window_before_minutes": "early window (minutes)", "lease_seconds": "lease (seconds)",
+              "max_attempts": "maximum attempts"}
+    impact = data["impact"] or {}
+    if operation == "create_rule":
+        summary = "Create rule: " + short(payload.get("schedule_kind", "manual")) + " schedule."
+        if payload.get("daily_time_local"):
+            summary += " Daily at " + short(payload["daily_time_local"]) + "."
+        if payload.get("interval_minutes"):
+            summary += " Every " + short(payload["interval_minutes"]) + " minutes."
+        if payload.get("one_shot_at"):
+            summary += " One shot at " + short(payload["one_shot_at"]) + "."
+        if payload.get("timezone_name"):
+            summary += " Time zone: " + short(payload["timezone_name"]) + "."
+        effect = "Creates a rule and its current scheduled runs."
+    elif operation == "update_rule":
+        changes = []
+        for key, value in payload.items():
+            label = labels.get(key, key)
+            if key == "instructions":
+                changes.append("update instructions")
+            elif key == "is_active":
+                changes.append("enable rule" if value else "pause rule")
+            else:
+                column = "timezone" if key == "timezone_name" else key
+                old = rule[column] if rule and column in rule.keys() else None
+                if rule is not None and column in rule.keys() and old != value:
+                    changes.append(label + ": " + short(old) + " → " + short(value))
+                else:
+                    changes.append(label + ": " + short(value))
+        summary = "; ".join(changes) + "."
+        if impact.get("metadata_only"):
+            effect = "Updates organization only; scheduled tasks are unchanged."
+        elif payload.get("is_active") is False:
+            effect = (f"Pausing will cancel {impact.get('unstarted', 0)} unleased automatic runs "
+                      f"and {impact.get('queued_retries', 0)} pending automatic retries.")
+        elif {"schedule_kind", "interval_minutes", "interval_anchor_at", "daily_time_local",
+              "timezone_name", "one_shot_at"} & payload.keys():
+            effect = (f"Rebuilds up to {impact.get('unstarted', 0)} automatic runs without attempts; "
+                      "active leases remain.")
+        else:
+            effect = (f"Updates up to {impact.get('unstarted', 0)} automatic runs without attempts; "
+                      f"{impact.get('queued_retries', 0)} pending retries retain their existing parameters.")
+    elif operation == "archive_rule":
+        summary = "Archive rule."
+        effect = (f"Cancels {impact.get('unleased', 0)} unleased instances; "
+                  f"{impact.get('leased', 0)} active leases will be preserved.")
+    elif operation == "run_rule":
+        summary, effect = "Run rule now.", "Creates one additional manual run."
+    elif operation == "cancel_instance":
+        summary = "Cancel task instance."
+        effect = f"Cancels an instance in state {impact.get('current_status') or 'unknown'}."
+    else:
+        summary = "Retry task instance."
+        effect = f"Creates a new manual retry for an instance in state {impact.get('current_status') or 'unknown'}."
+    return {**data, "target_title": title or target or "New rule",
+            "summary": summary, "impact_summary": effect if data["status"] == "pending" else None}
+
+
+def review_proposals(db_path: Path | None = None, status: str | None = None,
+                     limit: int = 50, offset: int = 0, count_only: bool = False) -> dict:
+    """Read a consistent page and count; polling the count does not read payloads."""
+    if status is not None and status not in {"pending", "approved", "rejected", "stale"}:
+        raise QueueAdminError("Unknown proposal status.")
+    if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
+        raise QueueAdminError("Invalid proposal pagination.")
+    where, params = (" WHERE status=?", (status,)) if status else ("", ())
+    with open_queue_db(db_path) as connection:
+        connection.execute("BEGIN")
+        total = connection.execute("SELECT COUNT(*) FROM task_change_proposals" + where, params).fetchone()[0]
+        if count_only:
+            return {"total": total}
+        rows = connection.execute(
+            "SELECT * FROM task_change_proposals" + where + " ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset)).fetchall()
+        return {"total": total, "proposals": [
+            _review_presentation(connection, _view(connection, row)) for row in rows]}
+
+
 def auto_approval_state(db_path: Path | None = None,
                         now: datetime | None = None) -> dict:
     now = utc(now or datetime.now(timezone.utc))
