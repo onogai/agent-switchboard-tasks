@@ -107,7 +107,7 @@ class QueueMigrationTests(unittest.TestCase):
 
     def test_refuses_wrong_schema_and_secret(self):
         with sqlite3.connect(self.legacy / "queue.sqlite3") as db:
-            db.execute("PRAGMA user_version=3")
+            db.execute("PRAGMA user_version=4")
         with self.assertRaisesRegex(MigrationError, "schema v2"):
             migrate(self.old_env, self.addon)
         with sqlite3.connect(self.legacy / "queue.sqlite3") as db:

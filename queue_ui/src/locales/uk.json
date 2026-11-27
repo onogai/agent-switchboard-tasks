@@ -158,5 +158,14 @@
   "Available to agents now:": "Доступно агентам зараз:",
   "Total rules:": "Усього правил:",
   "No tasks ready right now.": "Зараз немає готових задач.",
-  "Activity": "Активність"
+  "Activity": "Активність",
+  "Group": "Група",
+  "Ungrouped": "Без групи",
+  "Expand all": "Розгорнути всі",
+  "Collapse all": "Згорнути всі",
+  "Show archived": "Показати архівні",
+  "Expand group": "Розгорнути групу",
+  "Collapse group": "Згорнути групу",
+  "Optional organization only; does not affect execution.": "Необов’язкове групування; не впливає на виконання.",
+  "Updates organization only; scheduled tasks are unchanged.": "Змінюється лише групування; заплановані завдання залишаються без змін."
 }

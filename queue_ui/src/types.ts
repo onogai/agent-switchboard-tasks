@@ -5,6 +5,8 @@ export type MissPolicy = 'run_late' | 'skip' | 'merge_next'
 export interface Definition {
   id: string
   version: number
+  execution_version: number
+  group: string | null
   title: string
   instructions: string
   is_active: number
@@ -76,6 +78,7 @@ export interface Overview {
 }
 
 export interface DefinitionInput {
+  group: string | null
   title: string
   instructions: string
   schedule_kind: ScheduleKind
@@ -104,5 +107,5 @@ export interface Proposal {
   reason: string | null
   result: Record<string, unknown> | null
   decision_source: string | null
-  impact: { unstarted?: number; unleased?: number; leased?: number; queued_retries?: number; current_status?: string | null } | null
+  impact: { metadata_only?: boolean; unstarted?: number; unleased?: number; leased?: number; queued_retries?: number; current_status?: string | null } | null
 }

@@ -99,8 +99,8 @@ def snapshot(path: Path) -> dict:
         if db.execute("PRAGMA foreign_key_check").fetchall():
             raise MigrationError("Queue foreign key check failed")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version != 2:
-            raise MigrationError(f"Expected Queue schema v2, found v{version}")
+        if version not in (2, 3):
+            raise MigrationError(f"Expected Queue schema v2 or v3, found v{version}")
         existing = {
             row[0] for row in db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"

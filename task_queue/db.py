@@ -9,7 +9,7 @@ import sqlite3
 from typing import Iterator
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_V1 = (
     """
@@ -225,6 +225,12 @@ def migrate(connection: sqlite3.Connection) -> None:
                      AND status IN ('future', 'ready', 'leased')"""
             )
             connection.execute("PRAGMA user_version = 2")
+            version = 2
+        if version == 2:
+            connection.execute('ALTER TABLE task_definitions ADD COLUMN "group" TEXT')
+            connection.execute("ALTER TABLE task_definitions ADD COLUMN execution_version INTEGER NOT NULL DEFAULT 1 CHECK (execution_version > 0)")
+            connection.execute("UPDATE task_definitions SET execution_version=version")
+            connection.execute("PRAGMA user_version = 3")
 
 
 @contextmanager

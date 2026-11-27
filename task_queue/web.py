@@ -115,6 +115,7 @@ def definition_values(data: dict) -> dict:
     if kind not in ("manual", "interval", "daily"):
         raise QueueAdminError("Unknown schedule kind.")
     return {
+        **({"group": data["group"]} if "group" in data else {}),
         "title": str(data.get("title", "")),
         "instructions": str(data.get("instructions", "")),
         "schedule_kind": kind,

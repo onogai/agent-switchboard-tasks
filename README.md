@@ -53,3 +53,14 @@ in the Core repository.
 
 Back up SQLite using the online backup API (not an isolated live WAL file),
 and preserve the credentials needed to restore the deployment.
+
+## Rule organization
+
+Rules may have an optional `group` (trimmed, blank or null means ungrouped).
+The Rules UI hides archived rules by default and groups visible rules without
+changing their execution settings. `list_task_rules` excludes archived rules
+unless `include_archived=true`; `is_active` remains an independent filter.
+`get_task_rule` still reads archived rules. `version` is the optimistic-lock
+revision used by proposals; `execution_version` tracks the revision used by
+execution snapshots (`definition_version` on instances). Metadata-only group
+changes advance `version` but not `execution_version`, even across restarts.

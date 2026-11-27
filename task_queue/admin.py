@@ -28,13 +28,24 @@ def _timestamp(value: str | None, name: str) -> str | None:
         raise QueueAdminError(f"{name} must be a timezone-aware ISO timestamp.") from exc
 
 
+def normalize_group(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise QueueAdminError("Group must be a string or null.")
+    value = value.strip()
+    if len(value) > 200:
+        raise QueueAdminError("Group must contain at most 200 characters.")
+    return value or None
+
+
 def _settings(title: str, instructions: str, schedule_kind: str,
               priority: int, miss_policy: str, max_lateness_minutes: int,
               lease_seconds: int, max_attempts: int,
               interval_minutes: int | None, interval_anchor_at: str | None,
               daily_time_local: str | None, timezone_name: str | None,
               now: datetime, window_before_minutes: int = 0,
-              one_shot_at: str | None = None) -> dict:
+              one_shot_at: str | None = None, group: str | None = None) -> dict:
     title, instructions = title.strip(), instructions.strip()
     if not title or len(title) > 200:
         raise QueueAdminError("Title must contain 1–200 characters.")
@@ -89,7 +100,7 @@ def _settings(title: str, instructions: str, schedule_kind: str,
                 lease_seconds=lease_seconds, max_attempts=max_attempts,
                 interval_minutes=interval_minutes, interval_anchor_at=interval_anchor_at,
                 daily_time_local=daily_time_local, timezone=timezone_name,
-                one_shot_at=one_shot_at)
+                one_shot_at=one_shot_at, group=normalize_group(group))
 
 
 def _occurrence(rule: sqlite3.Row, at: datetime, *, previous: bool = False,
@@ -161,14 +172,14 @@ def apply_create(connection: sqlite3.Connection, payload: dict, now: datetime) -
            (id,title,instructions,priority,schedule_kind,interval_minutes,
             interval_anchor_at,daily_time_local,timezone,miss_policy,
             max_lateness_minutes,window_before_minutes,lease_seconds,max_attempts,
-            one_shot_at,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            one_shot_at,created_at,updated_at,"group")
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (rule_id, data["title"], data["instructions"], data["priority"],
          data["schedule_kind"], data["interval_minutes"], data["interval_anchor_at"],
          data["daily_time_local"], data["timezone"], data["miss_policy"],
          data["max_lateness_minutes"], data["window_before_minutes"],
          data["lease_seconds"], data["max_attempts"], data["one_shot_at"],
-         stamp(now), stamp(now)),
+         stamp(now), stamp(now), data["group"]),
     )
     event(connection, "definition", rule_id, "created", now, actor="admin")
     _initialize_schedule(connection, rule_id, now)
@@ -184,7 +195,7 @@ def create_definition(title: str, instructions: str, schedule_kind: str = "manua
                       timezone_name: str | None = None,
                       db_path: Path | None = None, now: datetime | None = None,
                       window_before_minutes: int = 0,
-                      one_shot_at: str | None = None) -> str:
+                      one_shot_at: str | None = None, group: str | None = None) -> str:
     now = utc(now or datetime.now(timezone.utc))
     payload = dict(title=title, instructions=instructions, schedule_kind=schedule_kind,
                    priority=priority, miss_policy=miss_policy,
@@ -192,7 +203,7 @@ def create_definition(title: str, instructions: str, schedule_kind: str = "manua
                    max_attempts=max_attempts, interval_minutes=interval_minutes,
                    interval_anchor_at=interval_anchor_at, daily_time_local=daily_time_local,
                    timezone_name=timezone_name, window_before_minutes=window_before_minutes,
-                   one_shot_at=one_shot_at)
+                   one_shot_at=one_shot_at, group=group)
     with open_queue_db(db_path) as connection, transaction(connection):
         return apply_create(connection, payload, now)
 
@@ -220,15 +231,15 @@ def _refresh_unstarted(connection: sqlite3.Connection, rule: sqlite3.Row,
            max_attempts_snapshot=?,updated_at=? WHERE definition_id=?
            AND origin='manual' AND status IN ('future','ready') AND attempt_count=0
            AND definition_version<>?""",
-        (rule["version"], rule["title"], rule["instructions"], rule["priority"],
-         rule["lease_seconds"], rule["max_attempts"], stamp(now), rule["id"], rule["version"]),
+        (rule["execution_version"], rule["title"], rule["instructions"], rule["priority"],
+         rule["lease_seconds"], rule["max_attempts"], stamp(now), rule["id"], rule["execution_version"]),
     )
     if not rule["is_active"]:
         return
     for item in connection.execute(
         """SELECT * FROM task_instances WHERE definition_id=?
            AND origin IN ('scheduled','one_shot') AND status IN ('future','ready')
-           AND attempt_count=0 AND definition_version<>?""", (rule["id"], rule["version"]),
+           AND attempt_count=0 AND definition_version<>?""", (rule["id"], rule["execution_version"]),
     ).fetchall():
         target = parse(item["scheduled_at"])
         start, end = window_for(rule, target)
@@ -239,7 +250,7 @@ def _refresh_unstarted(connection: sqlite3.Connection, rule: sqlite3.Row,
             coverage_start = (min(previous, coverage_start)
                               if coverage_start and coverage_start < old_previous
                               else previous)
-        version = rule["version"]
+        version = rule["execution_version"]
         connection.execute(
             """UPDATE task_instances SET definition_version=?,occurrence_key=?,
                title_snapshot=?,instructions_snapshot=?,priority_snapshot=?,
@@ -263,25 +274,13 @@ def refresh_pending_snapshots(db_path: Path | None = None, now: datetime | None 
                AND EXISTS (SELECT 1 FROM task_instances i WHERE i.definition_id=d.id
                  AND i.status IN ('future','ready') AND i.attempt_count=0
                  AND i.origin IN ('scheduled','one_shot','manual')
-                 AND i.definition_version<>d.version)"""
+                 AND i.definition_version<>d.execution_version)"""
         ).fetchall()
         for rule in rules:
             _refresh_unstarted(connection, rule, now)
 
 
-def apply_update(connection: sqlite3.Connection, rule_id: str, changes: dict,
-                 now: datetime, expected_version: int | None = None) -> None:
-    allowed = {"title", "instructions", "schedule_kind", "priority", "miss_policy",
-               "max_lateness_minutes", "window_before_minutes", "lease_seconds",
-               "max_attempts", "interval_minutes", "interval_anchor_at",
-               "daily_time_local", "timezone_name", "one_shot_at", "is_active"}
-    if not changes or set(changes) - allowed:
-        raise QueueAdminError("No valid definition changes were provided.")
-    old = connection.execute("SELECT * FROM task_definitions WHERE id=?", (rule_id,)).fetchone()
-    if old is None or old["archived_at"] is not None:
-        raise QueueAdminError("Unknown or archived rule.")
-    if expected_version is not None and old["version"] != expected_version:
-        raise QueueAdminError("Rule version conflict.")
+def _updated_settings(old: sqlite3.Row, changes: dict, now: datetime) -> tuple[dict, bool]:
     merged = dict(old)
     merged["timezone_name"] = merged["timezone"]
     merged.update(changes)
@@ -291,10 +290,42 @@ def apply_update(connection: sqlite3.Connection, rule_id: str, changes: dict,
                      merged["max_attempts"], merged["interval_minutes"],
                      merged["interval_anchor_at"], merged["daily_time_local"],
                      merged["timezone_name"], now, merged["window_before_minutes"],
-                     merged["one_shot_at"])
+                     merged["one_shot_at"], merged["group"])
     if merged["is_active"] not in (0, 1, True, False):
         raise QueueAdminError("is_active must be a boolean.")
-    active, was_active = bool(merged["is_active"]), bool(old["is_active"])
+    return data, bool(merged["is_active"])
+
+
+def _execution_changed(old: sqlite3.Row, data: dict, active: bool) -> bool:
+    return active != bool(old["is_active"]) or any(
+        data[key] != old[key] for key in data if key != "group")
+
+
+def apply_update(connection: sqlite3.Connection, rule_id: str, changes: dict,
+                 now: datetime, expected_version: int | None = None) -> None:
+    allowed = {"title", "instructions", "schedule_kind", "priority", "miss_policy",
+               "max_lateness_minutes", "window_before_minutes", "lease_seconds",
+               "max_attempts", "interval_minutes", "interval_anchor_at",
+               "daily_time_local", "timezone_name", "one_shot_at", "is_active", "group"}
+    if not changes or set(changes) - allowed:
+        raise QueueAdminError("No valid definition changes were provided.")
+    old = connection.execute("SELECT * FROM task_definitions WHERE id=?", (rule_id,)).fetchone()
+    if old is None or old["archived_at"] is not None:
+        raise QueueAdminError("Unknown or archived rule.")
+    if expected_version is not None and old["version"] != expected_version:
+        raise QueueAdminError("Rule version conflict.")
+    data, active = _updated_settings(old, changes, now)
+    was_active = bool(old["is_active"])
+    if not _execution_changed(old, data, active):
+        if data["group"] == old["group"]:
+            raise QueueAdminError("Rule update has no effect.")
+        # Keep optimistic locking independent of execution snapshots, including startup repair.
+        connection.execute(
+            """UPDATE task_definitions SET "group"=?,version=version+1,updated_at=? WHERE id=?""",
+            (data["group"], stamp(now), rule_id),
+        )
+        event(connection, "definition", rule_id, "updated", now, actor="admin")
+        return
     schedule_fields = {"schedule_kind", "interval_minutes", "interval_anchor_at",
                        "daily_time_local", "timezone", "one_shot_at"}
     schedule_changed = any(data[k] != old[k] for k in schedule_fields)
@@ -309,8 +340,6 @@ def apply_update(connection: sqlite3.Connection, rule_id: str, changes: dict,
         ).fetchone()
         if claimed:
             raise QueueAdminError("Cannot move a one-shot rule after claim.")
-    if active == was_active and all(data[k] == old[k] for k in data):
-        raise QueueAdminError("Rule update has no effect.")
     coverage_start = old["pending_coverage_start"] if active and was_active else None
     if not active and was_active:
         _cancel_unleased(connection, rule_id, now, "rule_paused", True)
@@ -346,7 +375,7 @@ def apply_update(connection: sqlite3.Connection, rule_id: str, changes: dict,
            schedule_kind=?,interval_minutes=?,interval_anchor_at=?,daily_time_local=?,
            timezone=?,miss_policy=?,max_lateness_minutes=?,window_before_minutes=?,
            lease_seconds=?,max_attempts=?,one_shot_at=?,pending_coverage_start=?,
-           next_scheduled_at=?,version=version+1,updated_at=? WHERE id=?""",
+           next_scheduled_at=?,"group"=?,execution_version=version+1,version=version+1,updated_at=? WHERE id=?""",
         (data["title"], data["instructions"], int(active), data["priority"],
          data["schedule_kind"], data["interval_minutes"], data["interval_anchor_at"],
          data["daily_time_local"], data["timezone"], data["miss_policy"],
@@ -354,7 +383,7 @@ def apply_update(connection: sqlite3.Connection, rule_id: str, changes: dict,
          data["lease_seconds"], data["max_attempts"], data["one_shot_at"],
          None if schedule_changed or active != was_active else old["pending_coverage_start"],
          None if schedule_changed or active != was_active else old["next_scheduled_at"],
-         stamp(now), rule_id),
+         data["group"], stamp(now), rule_id),
     )
     rule = connection.execute("SELECT * FROM task_definitions WHERE id=?", (rule_id,)).fetchone()
     _refresh_unstarted(connection, rule, now, old_schedule=old if schedule_changed else None)
@@ -434,7 +463,7 @@ def apply_trigger(connection: sqlite3.Connection, rule_id: str, now: datetime) -
             origin,miss_policy_snapshot,lease_seconds_snapshot,max_attempts_snapshot,
             status,created_at,updated_at)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (task_id, rule_id, rule["version"], f"manual:{task_id}", rule["title"],
+        (task_id, rule_id, rule["execution_version"], f"manual:{task_id}", rule["title"],
          rule["instructions"], rule["priority"], stamp(now), stamp(now), stamp(now),
          "manual", "run_late", rule["lease_seconds"], rule["max_attempts"],
          "ready", stamp(now), stamp(now)),
@@ -548,19 +577,24 @@ def list_instances(db_path: Path | None = None, status: str | None = None,
 
 
 def list_definition_summaries(is_active: bool | None, limit: int, offset: int,
-                              db_path: Path | None = None) -> list[dict]:
+                              db_path: Path | None = None, include_archived: bool = False) -> list[dict]:
     """MCP catalog: metadata only; never load instruction bodies."""
     query = """SELECT d.id,d.title,d.is_active,d.priority,d.schedule_kind,
                       d.interval_minutes,d.daily_time_local,d.timezone,d.one_shot_at,
-                      d.archived_at,d.version,d.next_scheduled_at,
+                      d.archived_at,d.version,d.execution_version,d."group",d.next_scheduled_at,
                       (SELECT MIN(i.scheduled_at) FROM task_instances i
                        WHERE i.definition_id=d.id
                          AND i.status IN ('future','ready','leased')) AS next_visible_at
                FROM task_definitions d"""
     params: list = []
+    conditions = []
+    if not include_archived:
+        conditions.append("d.archived_at IS NULL")
     if is_active is not None:
-        query += " WHERE d.is_active=? AND d.archived_at IS NULL"
+        conditions.append("d.is_active=?")
         params.append(int(is_active))
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY d.priority DESC,d.title,d.id LIMIT ? OFFSET ?"
     with open_queue_db(db_path) as connection:
         return [dict(row) for row in connection.execute(query, (*params, limit, offset))]

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { Link as RouterLink, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
@@ -7,11 +7,12 @@ import {
   Dialog, DialogActions, DialogContent, DialogTitle, Divider, Drawer, FormControl,
   FormHelperText, IconButton, InputLabel, MenuItem, Paper, Select, Slider, Stack, Tab, Tabs,
   TextField, Toolbar, Tooltip, Typography, useMediaQuery, useTheme,
+  Checkbox, FormControlLabel, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel,
 } from '@mui/material'
 import {
   AddRounded, ArrowBackRounded, AssignmentRounded, DashboardRounded,
   EditRounded, MenuRounded, PauseRounded, PlayArrowRounded, RefreshRounded,
-  RuleRounded, TimelineRounded,
+  RuleRounded, TimelineRounded, KeyboardArrowRightRounded, KeyboardArrowDownRounded,
 } from '@mui/icons-material'
 import { api, clearCsrf } from './api'
 import { queueLayout, queueMount } from './layoutMode'
@@ -87,11 +88,18 @@ function Shell() {
   const location = useLocation()
   const theme = useTheme()
   const mobile = useMediaQuery(theme.breakpoints.down('md'))
+  const [ruleExpansion, setRuleExpansion] = useState<Record<string, boolean>>({})
+  const [showArchived, setShowArchived] = useState(false)
+  useEffect(() => {
+    if (!location.pathname.startsWith('/rules')) {
+      setRuleExpansion({}); setShowArchived(false)
+    }
+  }, [location.pathname])
   const routes = <Routes>
     <Route path="/" element={<DashboardPage />} />
     <Route path="/queue" element={<QueuePage />} />
     <Route path="/tasks/:id" element={<TaskPage />} />
-    <Route path="/rules" element={<RulesPage />} />
+    <Route path="/rules" element={<RulesPage expanded={ruleExpansion} setExpanded={setRuleExpansion} showArchived={showArchived} setShowArchived={setShowArchived} />} />
     <Route path="/rules/new" element={<RuleFormPage />} />
     <Route path="/rules/:id" element={<RuleFormPage />} />
     <Route path="/proposals" element={<ProposalsPage />} />
@@ -154,6 +162,7 @@ function DashboardPage() {
   if (overview.isLoading || rules.isLoading) return <Loading />
   if (overview.error || rules.error) return <ErrorBox error={overview.error || rules.error} />
   const data = overview.data!
+  const visibleRules = rules.data!.definitions.filter(rule => !rule.archived_at).slice(0, 6)
   return <>
     <PageTitle title="Queue overview" description="Current task status and upcoming runs" action={<Stack direction="row" gap={1}><Tooltip title="Refresh"><IconButton onClick={() => client.invalidateQueries()}><RefreshRounded /></IconButton></Tooltip><Button component={RouterLink} to="/rules/new" variant="contained" startIcon={<AddRounded />}>New rule</Button></Stack>} />
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', lg: 'repeat(4,1fr)' }, gap: 1.5, mb: 2 }}>
@@ -170,7 +179,7 @@ function DashboardPage() {
       <Box><SectionHeading title="Ready now" to="/queue?status=ready" /><TaskList tasks={data.claimable} empty="No ready tasks." /></Box>
       <Box><SectionHeading title="Upcoming runs" to="/queue?status=future" /><TaskList tasks={data.upcoming.slice(0, 6)} empty="No scheduled tasks." /></Box>
       <Box><SectionHeading title="Recent results" to="/queue?status=succeeded" /><TaskList tasks={data.recent.slice(0, 6)} empty="No completed tasks yet." /></Box>
-      <Box><SectionHeading title="Rules" to="/rules" /><Paper variant="outlined">{rules.data!.definitions.slice(0, 6).map((rule, index) => <Box key={rule.id} component={RouterLink} to={`/rules/${rule.id}`} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, p: 2, color: 'text.primary', textDecoration: 'none', borderBottom: index < Math.min(rules.data!.definitions.length, 6) - 1 ? 1 : 0, borderColor: 'divider', '&:hover': { bgcolor: '#f8faff' } }}><Typography fontWeight={650}>{rule.title}</Typography><Chip size="small" color={rule.is_active && !rule.archived_at ? 'success' : 'default'} label={rule.archived_at ? 'Archived' : rule.is_active ? 'Active' : 'Paused'} /></Box>)}{!rules.data!.definitions.length && <Box p={3}>No rules yet.</Box>}</Paper></Box>
+      <Box><SectionHeading title="Rules" to="/rules" /><Paper variant="outlined">{visibleRules.map((rule, index) => <Box key={rule.id} component={RouterLink} to={`/rules/${rule.id}`} sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, p: 2, color: 'text.primary', textDecoration: 'none', borderBottom: index < visibleRules.length - 1 ? 1 : 0, borderColor: 'divider', '&:hover': { bgcolor: '#f8faff' } }}><Typography fontWeight={650}>{rule.title}</Typography><Chip size="small" color={rule.is_active && !rule.archived_at ? 'success' : 'default'} label={rule.archived_at ? 'Archived' : rule.is_active ? 'Active' : 'Paused'} /></Box>)}{!visibleRules.length && <Box p={3}>No rules yet.</Box>}</Paper></Box>
     </Box>
   </>
 }
@@ -204,22 +213,88 @@ function QueuePage() {
   </>
 }
 
-function RulesPage() {
+type RuleSort = 'title' | 'schedule_kind' | 'priority' | 'is_active' | 'next_visible_at'
+function RulesPage({ expanded, setExpanded, showArchived, setShowArchived }: {
+  expanded: Record<string, boolean>
+  setExpanded: Dispatch<SetStateAction<Record<string, boolean>>>
+  showArchived: boolean
+  setShowArchived: Dispatch<SetStateAction<boolean>>
+}) {
   const query = useQuery({ queryKey: ['definitions'], queryFn: api.definitions, refetchInterval: 30_000 })
-  const rows = query.data?.definitions || []
-  const columns: GridColDef<Definition>[] = [
-    { field: 'title', headerName: 'Rule', flex: 2, minWidth: 220, renderCell: p => <RouterLink to={`/rules/${p.row.id}`} style={{ color: '#2456a7', fontWeight: 650, textDecoration: 'none' }}>{p.value}</RouterLink> },
-    { field: 'schedule_kind', headerName: 'Schedule', width: 150, renderCell: p => p.row.one_shot_at ? 'Once' : ({ manual: 'Manual', one_shot: 'Once', interval: 'Interval', daily: 'Daily' })[p.value as ScheduleKind] },
-    { field: 'priority', headerName: 'Priority', width: 110 },
-    { field: 'is_active', headerName: 'Status', width: 130, renderCell: p => <Chip size="small" label={p.row.archived_at ? 'Archived' : p.value ? 'Active' : 'Paused'} color={p.value && !p.row.archived_at ? 'success' : 'default'} /> },
-    { field: 'next_visible_at', headerName: 'Next task', width: 210, valueFormatter: value => dateTime(value as string | null) },
-    { field: 'id', headerName: '', width: 100, sortable: false, renderCell: p => <Button component={RouterLink} to={`/rules/${p.value}`} size="small">Open</Button> },
+  const [sort, setSort] = useState<{ field: RuleSort; direction: 'asc' | 'desc' } | null>(null)
+  const groups = useMemo(() => {
+    const named = new Map<string, Definition[]>()
+    const ungrouped: Definition[] = []
+    for (const rule of query.data?.definitions || []) {
+      if (!showArchived && rule.archived_at) continue
+      if (!rule.group) ungrouped.push(rule)
+      else {
+        const rows = named.get(rule.group) || []
+        rows.push(rule)
+        named.set(rule.group, rows)
+      }
+    }
+    const result = [...named.entries()].sort(([a], [b]) => a.localeCompare(b, languageTag()) || (a < b ? -1 : 1))
+      .map(([name, rows]) => ({ id: 'named:' + name, name, rows }))
+    if (ungrouped.length) result.push({ id: 'ungrouped', name: tx('Ungrouped'), rows: ungrouped })
+    if (sort) for (const group of result) {
+      group.rows.sort((a, b) => {
+        const av = a[sort.field] ?? '', bv = b[sort.field] ?? ''
+        const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv), languageTag())
+        return sort.direction === 'asc' ? cmp : -cmp
+      })
+    }
+    return result
+  }, [query.data, showArchived, sort])
+  const isExpanded = (id: string) => expanded[id] ?? id === 'ungrouped'
+  const allExpanded = groups.length > 0 && groups.every(group => isExpanded(group.id))
+  const columns: { field: RuleSort; label: string }[] = [
+    { field: 'title', label: 'Rule' }, { field: 'schedule_kind', label: 'Schedule' },
+    { field: 'priority', label: 'Priority' }, { field: 'is_active', label: 'Status' },
+    { field: 'next_visible_at', label: 'Next task' },
   ]
-  return <><PageTitle title="Rules" description="Goals, schedules and missed-run policies" action={<Button component={RouterLink} to="/rules/new" variant="contained" startIcon={<AddRounded />}>New rule</Button>} />{query.error && <ErrorBox error={query.error} />}<Paper variant="outlined" sx={{ height: 650 }}><DataGrid rows={rows} columns={columns} loading={query.isLoading} disableRowSelectionOnClick pageSizeOptions={[10, 25, 50]} sx={{ border: 0 }} /></Paper></>
+  return <>
+    <PageTitle title="Rules" description="Goals, schedules and missed-run policies" action={<Button component={RouterLink} to="/rules/new" variant="contained" startIcon={<AddRounded />}>New rule</Button>} />
+    <Stack direction="row" alignItems="center" gap={2} sx={{ mb: 1 }}>
+      <Button size="small" disabled={!groups.length} onClick={() => setExpanded(old => ({
+        ...old, ...Object.fromEntries(groups.map(group => [group.id, !allExpanded])),
+      }))}>{tx(allExpanded ? 'Collapse all' : 'Expand all')}</Button>
+      <FormControlLabel control={<Checkbox size="small" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />} label="Show archived" />
+    </Stack>
+    {query.error && <ErrorBox error={query.error} />}
+    {query.isLoading ? <Loading /> : !groups.length ? <Empty text="No rules yet." /> :
+      <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
+        <Table size="small" aria-label="Rules" sx={{ minWidth: 640, '& .MuiTableCell-root': { py: 0.5 }, '& .rule-row': { height: 36 } }}>
+          <TableHead><TableRow>{columns.map(col => <TableCell key={col.field} sortDirection={sort?.field === col.field ? sort.direction : false}>
+            <TableSortLabel active={sort?.field === col.field} direction={sort?.field === col.field ? sort.direction : 'asc'} onClick={() => setSort({ field: col.field, direction: sort?.field === col.field && sort.direction === 'asc' ? 'desc' : 'asc' })}>{tx(col.label)}</TableSortLabel>
+          </TableCell>)}<TableCell align="right" /></TableRow></TableHead>
+          <TableBody>{groups.map(group => <Fragment key={group.id}>
+            <TableRow sx={{ bgcolor: 'action.hover' }}><TableCell colSpan={6} sx={{ py: '3px !important' }}>
+              <Stack direction="row" alignItems="center" gap={1}>
+                <IconButton size="small" aria-label={tx(isExpanded(group.id) ? 'Collapse group' : 'Expand group') + ': ' + group.name} aria-expanded={isExpanded(group.id)}
+                  onClick={() => setExpanded(old => ({ ...old, [group.id]: !isExpanded(group.id) }))}>
+                  {isExpanded(group.id) ? <KeyboardArrowDownRounded fontSize="small" /> : <KeyboardArrowRightRounded fontSize="small" />}
+                </IconButton>
+                <Typography variant="body2" fontWeight={750}>{group.name}</Typography>
+                <Typography variant="caption" color="text.secondary">{group.rows.length}</Typography>
+              </Stack>
+            </TableCell></TableRow>
+            {isExpanded(group.id) && group.rows.map(rule => <TableRow hover key={rule.id} className="rule-row">
+              <TableCell><RouterLink to={`/rules/${rule.id}`} style={{ color: '#2456a7', fontWeight: 650, textDecoration: 'none' }}>{rule.title}</RouterLink></TableCell>
+              <TableCell>{tx(rule.one_shot_at ? 'Once' : ({ manual: 'Manual', one_shot: 'Once', interval: 'Interval', daily: 'Daily' })[rule.schedule_kind])}</TableCell>
+              <TableCell>{rule.priority}</TableCell>
+              <TableCell><Chip size="small" label={rule.archived_at ? 'Archived' : rule.is_active ? 'Active' : 'Paused'} color={rule.is_active && !rule.archived_at ? 'success' : 'default'} /></TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}>{dateTime(rule.next_visible_at)}</TableCell>
+              <TableCell align="right"><Button component={RouterLink} to={`/rules/${rule.id}`} size="small" sx={{ py: 0 }}>Open</Button></TableCell>
+            </TableRow>)}
+          </Fragment>)}</TableBody>
+        </Table>
+      </TableContainer>}
+  </>
 }
 
 const freshForm = (): DefinitionInput => ({
-  title: '', instructions: '', schedule_kind: 'manual', priority: 5,
+  title: '', instructions: '', group: null, schedule_kind: 'manual', priority: 5,
   miss_policy: 'run_late', max_lateness_minutes: 30, window_before_minutes: 0,
   one_shot_at: null, lease_seconds: 1800,
   max_attempts: 3, interval_minutes: 60, interval_anchor_at: null,
@@ -235,7 +310,7 @@ function RuleFormPage() {
   const [form, setForm] = useState<DefinitionInput>(freshForm)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
-  useEffect(() => { if (query.data) { const row = query.data.definition; setForm({ title: row.title, instructions: row.instructions, schedule_kind: row.one_shot_at ? 'one_shot' : row.schedule_kind, priority: row.priority, miss_policy: row.miss_policy, max_lateness_minutes: row.max_lateness_minutes, window_before_minutes: row.window_before_minutes, one_shot_at: row.one_shot_at, lease_seconds: row.lease_seconds, max_attempts: row.max_attempts, interval_minutes: row.interval_minutes || 60, interval_anchor_at: row.interval_anchor_at, daily_time_local: row.daily_time_local || '10:00', timezone_name: row.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Madrid' }) } }, [query.data])
+  useEffect(() => { if (query.data) { const row = query.data.definition; setForm({ title: row.title, instructions: row.instructions, group: row.group ?? null, schedule_kind: row.one_shot_at ? 'one_shot' : row.schedule_kind, priority: row.priority, miss_policy: row.miss_policy, max_lateness_minutes: row.max_lateness_minutes, window_before_minutes: row.window_before_minutes, one_shot_at: row.one_shot_at, lease_seconds: row.lease_seconds, max_attempts: row.max_attempts, interval_minutes: row.interval_minutes || 60, interval_anchor_at: row.interval_anchor_at, daily_time_local: row.daily_time_local || '10:00', timezone_name: row.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Madrid' }) } }, [query.data])
   const save = useMutation({ mutationFn: () => edit ? api.update(id!, form, query.data!.definition.version) : api.create(form), onSuccess: result => { client.invalidateQueries(); navigate(`/rules/${result.id}`); setMessage('Rule saved.') }, onError: e => setError((e as Error).message) })
   const toggle = useMutation({ mutationFn: () => api.toggle(id!, !Boolean(query.data!.definition.is_active), query.data!.definition.version), onSuccess: () => { client.invalidateQueries(); query.refetch(); setMessage('Rule status updated.') }, onError: e => setError((e as Error).message) })
   const archive = useMutation({ mutationFn: () => api.archive(id!, query.data!.definition.version), onSuccess: () => { client.invalidateQueries(); navigate('/rules') }, onError: e => setError((e as Error).message) })
@@ -252,6 +327,7 @@ function RuleFormPage() {
     <Box component="form" onSubmit={event => { event.preventDefault(); setError(''); save.mutate() }}>
       <Card sx={{ mb: 2 }}><CardContent sx={{ p: 3 }}><Typography variant="h6" fontWeight={700} gutterBottom>Task</Typography><Stack gap={2.5}>
         <TextField label="Title" value={form.title} onChange={e => set('title', e.target.value)} required inputProps={{ maxLength: 200 }} helperText="This title will appear in the queue for you and the agent." />
+        <TextField label="Group" value={form.group ?? ''} onChange={e => set('group', e.target.value)} inputProps={{ maxLength: 200 }} helperText="Optional organization only; does not affect execution." />
         <TextField label="Instructions for the agent" value={form.instructions} onChange={e => set('instructions', e.target.value)} required multiline minRows={7} helperText="Describe the expected action and outcome. These instructions are included in every task instance." />
       </Stack></CardContent></Card>
       <Card sx={{ mb: 2 }}><CardContent sx={{ p: 3 }}><Typography variant="h6" fontWeight={700} gutterBottom>Schedule</Typography><Stack gap={2.5}>
@@ -323,6 +399,7 @@ function ProposalsPage() {
     if (p.operation === 'cancel_instance') return `Cancels an instance in state ${i?.current_status || 'unknown'}.`
     if (p.operation === 'retry_instance') return `Creates a new manual retry for an instance in state ${i?.current_status || 'unknown'}.`
     if (p.operation === 'archive_rule') return `Cancels ${i?.unleased ?? 0} unleased instances; ${i?.leased ?? 0} active leases will be preserved.`
+    if (i?.metadata_only) return tx('Updates organization only; scheduled tasks are unchanged.')
     if (p.payload.is_active === false) return `Pausing will cancel ${i?.unstarted ?? 0} unleased automatic runs and ${i?.queued_retries ?? 0} pending automatic retries.`
     if (['schedule_kind', 'interval_minutes', 'interval_anchor_at', 'daily_time_local', 'timezone_name', 'one_shot_at'].some(key => key in p.payload)) return `Rebuilds up to ${i?.unstarted ?? 0} automatic runs without attempts; active leases remain.`
     return `Updates up to ${i?.unstarted ?? 0} automatic runs without attempts; ${i?.queued_retries ?? 0} pending retries retain their existing parameters.`
