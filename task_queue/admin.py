@@ -301,6 +301,12 @@ def _execution_changed(old: sqlite3.Row, data: dict, active: bool) -> bool:
         data[key] != old[key] for key in data if key != "group")
 
 
+def _schedule_changed(old: sqlite3.Row, data: dict) -> bool:
+    fields = {"schedule_kind", "interval_minutes", "interval_anchor_at",
+              "daily_time_local", "timezone", "one_shot_at"}
+    return any(data[key] != old[key] for key in fields)
+
+
 def apply_update(connection: sqlite3.Connection, rule_id: str, changes: dict,
                  now: datetime, expected_version: int | None = None) -> None:
     allowed = {"title", "instructions", "schedule_kind", "priority", "miss_policy",
@@ -326,9 +332,7 @@ def apply_update(connection: sqlite3.Connection, rule_id: str, changes: dict,
         )
         event(connection, "definition", rule_id, "updated", now, actor="admin")
         return
-    schedule_fields = {"schedule_kind", "interval_minutes", "interval_anchor_at",
-                       "daily_time_local", "timezone", "one_shot_at"}
-    schedule_changed = any(data[k] != old[k] for k in schedule_fields)
+    schedule_changed = _schedule_changed(old, data)
     if (schedule_changed and data["one_shot_at"] is not None and active
             and now > parse(data["one_shot_at"]) + timedelta(
                 minutes=data["max_lateness_minutes"])):

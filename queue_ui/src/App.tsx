@@ -95,6 +95,14 @@ function Shell() {
       setRuleExpansion({}); setShowArchived(false)
     }
   }, [location.pathname])
+  useEffect(() => {
+    if (!embeddedQueue || typeof BroadcastChannel === 'undefined') return
+    const channel = new BroadcastChannel('switchboard:task-proposals')
+    channel.onmessage = event => {
+      if (event.data === 'changed') void queryClient.invalidateQueries()
+    }
+    return () => channel.close()
+  }, [queryClient])
   const routes = <Routes>
     <Route path="/" element={<DashboardPage />} />
     <Route path="/queue" element={<QueuePage />} />
@@ -390,21 +398,17 @@ function ProposalsPage() {
   const pending = useQuery({ queryKey: ['proposals', 'pending'], queryFn: () => api.proposals('pending'), refetchInterval: 20_000 })
   const recent = useQuery({ queryKey: ['proposals', 'decided'], queryFn: () => api.proposals(), refetchInterval: 30_000 })
   const auto = useQuery({ queryKey: ['autoApproval'], queryFn: api.autoApproval, refetchInterval: 20_000 })
-  const decision = useMutation({ mutationFn: ({ id, approve }: { id: string; approve: boolean }) => api.decideProposal(id, approve), onSuccess: () => client.invalidateQueries(), onError: e => setError((e as Error).message) })
+  const decision = useMutation({ mutationFn: ({ id, approve }: { id: string; approve: boolean }) => api.decideProposal(id, approve), onSuccess: (result, variables) => {
+    setError(result.status === (variables.approve ? 'approved' : 'rejected') ? '' : result.reason || result.status)
+    void client.invalidateQueries()
+    if (embeddedQueue && typeof BroadcastChannel !== 'undefined') {
+      const channel = new BroadcastChannel('switchboard:task-proposals')
+      channel.postMessage('changed')
+      channel.close()
+    }
+  }, onError: e => setError((e as Error).message) })
   const toggleAuto = useMutation({ mutationFn: (enabled: boolean) => api.setAutoApproval(enabled), onSuccess: () => client.invalidateQueries(), onError: e => setError((e as Error).message) })
-  const impactText = (p: Proposal) => {
-    const i = p.impact
-    if (p.operation === 'create_rule') return 'Creates a rule and its current scheduled runs.'
-    if (p.operation === 'run_rule') return 'Creates one additional manual run.'
-    if (p.operation === 'cancel_instance') return `Cancels an instance in state ${i?.current_status || 'unknown'}.`
-    if (p.operation === 'retry_instance') return `Creates a new manual retry for an instance in state ${i?.current_status || 'unknown'}.`
-    if (p.operation === 'archive_rule') return `Cancels ${i?.unleased ?? 0} unleased instances; ${i?.leased ?? 0} active leases will be preserved.`
-    if (i?.metadata_only) return tx('Updates organization only; scheduled tasks are unchanged.')
-    if (p.payload.is_active === false) return `Pausing will cancel ${i?.unstarted ?? 0} unleased automatic runs and ${i?.queued_retries ?? 0} pending automatic retries.`
-    if (['schedule_kind', 'interval_minutes', 'interval_anchor_at', 'daily_time_local', 'timezone_name', 'one_shot_at'].some(key => key in p.payload)) return `Rebuilds up to ${i?.unstarted ?? 0} automatic runs without attempts; active leases remain.`
-    return `Updates up to ${i?.unstarted ?? 0} automatic runs without attempts; ${i?.queued_retries ?? 0} pending retries retain their existing parameters.`
-  }
-  const card = (proposal: Proposal) => <Card key={proposal.id} sx={{ mb: 2 }}><CardContent><Stack direction="row" justifyContent="space-between" gap={2}><Box><Typography fontWeight={700}>{proposal.operation}</Typography><Typography variant="body2" color="text.secondary">{dateTime(proposal.created_at)} · {proposal.target_id || 'New rule'} · {proposal.status}</Typography></Box>{proposal.status === 'pending' && <Stack direction="row" gap={1}><Button variant="contained" disabled={decision.isPending} onClick={() => decision.mutate({ id: proposal.id, approve: true })}>Approve</Button><Button variant="outlined" disabled={decision.isPending} onClick={() => decision.mutate({ id: proposal.id, approve: false })}>Reject</Button></Stack>}</Stack><Typography variant="caption" color="text.secondary">Rule version: {proposal.expected_version ?? '—'}</Typography>{proposal.status === 'pending' && <Typography variant="body2" sx={{ mt: 1 }}>{impactText(proposal)}</Typography>}<Box component="pre" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', bgcolor: '#f5f7fb', p: 2, borderRadius: 1, fontSize: 13 }}>{JSON.stringify(proposal.payload, null, 2)}</Box>{proposal.result && <Typography variant="body2">Result: {JSON.stringify(proposal.result)}</Typography>}{proposal.reason && <Alert severity="warning">{proposal.reason}</Alert>}</CardContent></Card>
+  const card = (proposal: Proposal) => <Card key={proposal.id} sx={{ mb: 2 }}><CardContent><Stack direction="row" justifyContent="space-between" gap={2}><Box><Typography fontWeight={700}>{proposal.operation}</Typography><Typography variant="body2" color="text.secondary">{dateTime(proposal.created_at)} · {proposal.target_title || proposal.target_id || 'New rule'} · {proposal.status}</Typography></Box>{proposal.status === 'pending' && <Stack direction="row" gap={1}><Button variant="contained" disabled={decision.isPending} onClick={() => decision.mutate({ id: proposal.id, approve: true })}>Approve</Button><Button variant="outlined" disabled={decision.isPending} onClick={() => decision.mutate({ id: proposal.id, approve: false })}>Reject</Button></Stack>}</Stack><Typography variant="caption" color="text.secondary">Rule version: {proposal.expected_version ?? '—'}</Typography>{proposal.status === 'pending' && <Typography variant="body2" sx={{ mt: 1 }}>{proposal.summary} {proposal.impact_summary}</Typography>}<Box component="pre" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', bgcolor: '#f5f7fb', p: 2, borderRadius: 1, fontSize: 13 }}>{JSON.stringify(proposal.payload, null, 2)}</Box>{proposal.result && <Typography variant="body2">Result: {JSON.stringify(proposal.result)}</Typography>}{proposal.reason && <Alert severity="warning">{proposal.reason}</Alert>}</CardContent></Card>
   return <><PageTitle title="Agent proposals" description="Review proposed changes before applying them." />{error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}<Card sx={{ mb: 3 }}><CardContent><Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems="center" gap={2}><Box><Typography fontWeight={700}>Automatic approval</Typography><Typography variant="body2" color="text.secondary">{auto.data?.enabled ? `Enabled until ${dateTime(auto.data.until)}` : 'Disabled. New MCP proposals await a decision.'}</Typography></Box><Button variant={auto.data?.enabled ? 'outlined' : 'contained'} color={auto.data?.enabled ? 'error' : 'primary'} disabled={toggleAuto.isPending || !auto.data} onClick={() => toggleAuto.mutate(!auto.data!.enabled)}>{auto.data?.enabled ? 'Disable' : 'Enable for one hour'}</Button></Stack></CardContent></Card><Typography variant="h6" sx={{ mb: 2 }}>Pending approval</Typography>{pending.isLoading ? <Loading /> : pending.error ? <ErrorBox error={pending.error} /> : pending.data?.proposals.length ? pending.data.proposals.map(card) : <Empty text="No proposals." />}<Typography variant="h6" sx={{ mt: 4, mb: 2 }}>Recent decisions</Typography>{recent.data?.proposals.filter(p => p.status !== 'pending').slice(0, 20).map(card)}</>
 }
 

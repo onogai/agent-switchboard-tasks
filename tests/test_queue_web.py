@@ -108,6 +108,55 @@ class QueueWebTests(unittest.TestCase):
         self.assertEqual(self.write("/queue/api/auto-approval", {"enabled": False}).json()["enabled"],
                          False)
 
+    def test_review_proposals_count_and_summary(self):
+        for index in range(3):
+            submit_proposal("create_rule", {"title": f"Review {index}", "instructions": "Work"},
+                            None, None, "agent", f"count-{index}", self.path)
+        base = "/queue/api/proposals?status=pending"
+        self.assertEqual(self.client.get(base + "&count_only=1").json(), {"total": 3})
+        page = self.client.get(base + "&limit=1").json()
+        self.assertEqual(page["total"], 3)
+        self.assertEqual(len(page["proposals"]), 1)
+        proposal = page["proposals"][0]
+        self.assertTrue(proposal["target_title"].startswith("Review "))
+        self.assertIn("Create rule", proposal["summary"])
+        self.assertIn("scheduled runs", proposal["impact_summary"])
+        next_page = self.client.get(base + "&limit=1&offset=1").json()
+        self.assertNotEqual(next_page["proposals"][0]["id"], proposal["id"])
+        self.assertEqual(self.write(f"/queue/api/proposals/{proposal['id']}/reject").json()["status"], "rejected")
+        self.assertEqual(self.client.get(base + "&count_only=1").json(), {"total": 2})
+        self.assertEqual(self.client.get(base + "&limit=101").status_code, 400)
+
+    def test_review_uses_normalized_effective_rule_changes(self):
+        created = self.write("/queue/api/definitions", {
+            "title": "News", "instructions": "Run", "schedule_kind": "daily",
+            "daily_time_local": "10:00", "timezone_name": "Europe/Madrid"})
+        self.assertEqual(created.status_code, 200, created.text)
+        identifier = created.json()["id"]
+        rule = self.client.get(f"/queue/api/definitions/{identifier}").json()["definition"]
+
+        def review(payload, key):
+            proposal = submit_proposal("update_rule", payload, identifier, rule["version"],
+                                       "agent", key, self.path)
+            rows = self.client.get("/queue/api/proposals?status=pending").json()["proposals"]
+            return next(row for row in rows if row["id"] == proposal["id"])
+
+        unchanged_time = review({"daily_time_local": "10:0", "instructions": "New instructions"}, "same-time")
+        self.assertEqual(unchanged_time["target_title"], "News")
+        self.assertEqual(unchanged_time["summary"], "update instructions.")
+        self.assertIn("Updates up to", unchanged_time["impact_summary"])
+        changed_time = review({"daily_time_local": "11:0"}, "new-time")
+        self.assertIn("10:00 → 11:00", changed_time["summary"])
+        self.assertIn("Rebuilds", changed_time["impact_summary"])
+        group = review({"group": "Reports", "daily_time_local": "10:0"}, "group-only")
+        self.assertIn("organization only", group["impact_summary"])
+        paused = review({"is_active": False}, "pause")
+        self.assertIn("Pausing will cancel", paused["impact_summary"])
+        self.assertEqual(self.write(f"/queue/api/proposals/{changed_time['id']}/approve").json()["status"], "approved")
+        rows = self.client.get("/queue/api/proposals?status=pending").json()["proposals"]
+        self.assertIn("version conflict", next(row for row in rows if row["id"] == group["id"])["impact_summary"])
+        self.assertEqual(self.write(f"/queue/api/proposals/{group['id']}/approve").json()["status"], "stale")
+
     def test_csrf_and_validation(self):
         path = "/queue/api/definitions"
         bad = self.client.post(path, json={"title": "No", "instructions": "Run"})
