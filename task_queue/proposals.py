@@ -25,9 +25,15 @@ def _canonical(value: dict) -> str:
 
 def _normalize_rule_fields(payload: dict) -> dict:
     payload = dict(payload)
+    if "timezone" in payload:
+        if "timezone_name" in payload and payload["timezone_name"] != payload["timezone"]:
+            raise QueueAdminError("timezone and legacy timezone_name disagree; use timezone.")
+        payload["timezone_name"] = payload.pop("timezone")
     if "window_after_minutes" in payload:
-        if "max_lateness_minutes" in payload:
-            raise QueueAdminError("Use only window_after_minutes for the late window.")
+        if ("max_lateness_minutes" in payload
+                and payload["max_lateness_minutes"] != payload["window_after_minutes"]):
+            raise QueueAdminError("max_lateness_minutes and legacy window_after_minutes disagree; "
+                                  "use max_lateness_minutes.")
         payload["max_lateness_minutes"] = payload.pop("window_after_minutes")
     if payload.get("schedule_kind") == "one_shot":
         if not payload.get("one_shot_at"):
@@ -142,25 +148,39 @@ def submit_proposal(operation: str, payload: dict, target_id: str | None,
     if operation == "create_rule":
         if target_id is not None or expected_version is not None:
             raise QueueAdminError("Create proposal cannot name an existing rule.")
-        payload = {"schedule_kind": "manual", "priority": 5,
-                   "miss_policy": "run_late", "max_lateness_minutes": 30,
-                   "window_before_minutes": 0, "lease_seconds": 1800,
-                   "max_attempts": 3, "interval_minutes": None,
-                   "interval_anchor_at": None, "daily_time_local": None,
-                   "timezone_name": None, "one_shot_at": None, **payload}
-        try:
-            _settings(now=now, **payload)
-        except TypeError as exc:
-            raise QueueAdminError("Invalid rule fields.") from exc
+        defaults = {"schedule_kind": "manual", "priority": 5,
+                    "miss_policy": "run_late", "max_lateness_minutes": 30,
+                    "window_before_minutes": 0, "lease_seconds": 1800,
+                    "max_attempts": 3, "interval_minutes": None,
+                    "interval_anchor_at": None, "daily_time_local": None,
+                    "timezone_name": None, "one_shot_at": None}
+        required = {"title", "instructions"}
+        unknown = set(payload) - defaults.keys() - required
+        missing = required - payload.keys()
+        if unknown or missing:
+            details = []
+            if unknown:
+                details.append("Unknown fields: " + ", ".join(sorted(unknown)))
+            if missing:
+                details.append("Required fields: " + ", ".join(sorted(missing)))
+            if "is_active" in unknown:
+                details.append("New rules are active; use update_rule to pause")
+            raise QueueAdminError("; ".join(details))
+        payload = {**defaults, **payload}
+        _settings(now=now, **payload)
     elif operation in RULE_OPERATIONS:
         if not target_id or type(expected_version) is not int or expected_version <= 0:
             raise QueueAdminError("Rule target and expected_version are required.")
-        if operation == "update_rule" and (not payload or set(payload) - {
-            "title", "instructions", "schedule_kind", "priority", "miss_policy",
-            "max_lateness_minutes", "window_before_minutes", "lease_seconds",
-            "max_attempts", "interval_minutes", "interval_anchor_at", "daily_time_local",
-            "timezone_name", "one_shot_at", "is_active"}):
-            raise QueueAdminError("Invalid rule update fields.")
+        if operation == "update_rule":
+            unknown = set(payload) - {
+                "title", "instructions", "schedule_kind", "priority", "miss_policy",
+                "max_lateness_minutes", "window_before_minutes", "lease_seconds",
+                "max_attempts", "interval_minutes", "interval_anchor_at", "daily_time_local",
+                "timezone_name", "one_shot_at", "is_active"}
+            if unknown:
+                raise QueueAdminError("Unknown update fields: " + ", ".join(sorted(unknown)))
+            if not payload:
+                raise QueueAdminError("changes must contain at least one field.")
         if operation != "update_rule" and payload:
             raise QueueAdminError("This proposal takes no payload.")
     else:
