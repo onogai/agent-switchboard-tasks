@@ -39,7 +39,7 @@ class IsolationTests(unittest.TestCase):
         from task_queue.db import open_queue_db
         with tempfile.TemporaryDirectory() as td:
             with open_queue_db(Path(td) / "test.sqlite3") as db:
-                self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+                self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
 
     def test_web_ui_assets_present(self):
         self.assertTrue(Path("/app/queue_ui/dist/index.html").is_file())

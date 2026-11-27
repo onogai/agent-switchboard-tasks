@@ -99,8 +99,8 @@ def snapshot(path: Path) -> dict:
         if db.execute("PRAGMA foreign_key_check").fetchall():
             raise MigrationError("Queue foreign key check failed")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version != 2:
-            raise MigrationError(f"Expected Queue schema v2, found v{version}")
+        if version not in (2, 3):
+            raise MigrationError(f"Expected Queue schema v2 or v3, found v{version}")
         existing = {
             row[0] for row in db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -174,6 +174,8 @@ def migrate(legacy_env: Path, addon_root: Path, *,
     source = staged_db if reverse else legacy_db
     target = legacy_db if reverse else staged_db
     original = snapshot(source)
+    if reverse and original["version"] >= 3:
+        raise MigrationError("Legacy schema v2 runtime cannot open schema v3; restore a compatible managed backup instead.")
     if source.resolve() == target.resolve():
         raise MigrationError("Source and destination are the same database")
     if target.exists():

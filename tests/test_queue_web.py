@@ -118,6 +118,40 @@ class QueueWebTests(unittest.TestCase):
         self.assertIn("Priority", invalid.json()["error"])
         self.assertEqual(list_definitions(self.path), [])
 
+    def test_full_form_group_edit_does_not_refresh_instances(self):
+        path = "/queue/api/definitions"
+        form = {"title": "News", "instructions": "Run", "schedule_kind": "daily",
+                "daily_time_local": "10:00", "timezone_name": "Europe/Madrid",
+                "priority": 7, "group": "Initial"}
+        created = self.write(path, form)
+        self.assertEqual(created.status_code, 200, created.text)
+        identifier = created.json()["id"]
+        url = f"{path}/{identifier}"
+        old = self.client.get(url).json()["definition"]
+        def instances():
+            with open_queue_db(self.path) as db:
+                return [dict(row) for row in db.execute(
+                    "SELECT * FROM task_instances ORDER BY id")]
+        before = instances()
+        self.assertTrue(before)
+        edited = self.write(url, {**form, "group": "  Reports  ",
+                            "expected_version": old["version"]}, "put")
+        self.assertEqual(edited.status_code, 200, edited.text)
+        after = self.client.get(url).json()["definition"]
+        self.assertEqual(after["group"], "Reports")
+        self.assertEqual(after["version"], old["version"] + 1)
+        self.assertEqual(after["execution_version"], old["execution_version"])
+        self.assertEqual(before, instances())
+        self.assertEqual(self.client.get(path).json()["definitions"][0]["group"], "Reports")
+        stale = self.write(url, {**form, "group": None,
+                           "expected_version": old["version"]}, "put")
+        self.assertEqual(stale.status_code, 409)
+        cleared = self.write(url, {**form, "group": " ",
+                             "expected_version": after["version"]}, "put")
+        self.assertEqual(cleared.status_code, 200, cleared.text)
+        self.assertIsNone(self.client.get(url).json()["definition"]["group"])
+        self.assertEqual(before, instances())
+
     def test_create_edit_trigger_cancel_retry(self):
         path = "/queue/api/definitions"
         data = {"title": "Spanish news", "instructions": "<script>x</script>",

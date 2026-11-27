@@ -9,7 +9,8 @@ import sqlite3
 from uuid import uuid4
 
 from .admin import (QueueAdminError, _settings, apply_archive, apply_cancel,
-                    apply_create, apply_retry, apply_trigger, apply_update)
+                    apply_create, apply_retry, apply_trigger, apply_update,
+                    normalize_group, _updated_settings, _execution_changed)
 from .db import open_queue_db, transaction
 from .models import RULE_CREATE_DEFAULTS
 from .scheduler import parse, stamp, utc
@@ -26,6 +27,8 @@ def _canonical(value: dict) -> str:
 
 def _normalize_rule_fields(payload: dict) -> dict:
     payload = dict(payload)
+    if "group" in payload:
+        payload["group"] = normalize_group(payload["group"])
     if "timezone" in payload:
         if "timezone_name" in payload and payload["timezone_name"] != payload["timezone"]:
             raise QueueAdminError("timezone and legacy timezone_name disagree; use timezone.")
@@ -54,6 +57,15 @@ def _row(row: sqlite3.Row) -> dict:
 def _impact(connection: sqlite3.Connection, data: dict) -> dict | None:
     if data["status"] != "pending" or not data["target_id"]:
         return None
+    if data["operation"] == "update_rule" and "group" in data["payload"]:
+        rule = connection.execute("SELECT * FROM task_definitions WHERE id=?", (data["target_id"],)).fetchone()
+        if rule is not None and rule["archived_at"] is None:
+            try:
+                settings, active = _updated_settings(rule, data["payload"], datetime.now(timezone.utc))
+                if not _execution_changed(rule, settings, active):
+                    return {"metadata_only": True}
+            except QueueAdminError:
+                pass  # Invalid edits are handled by the normal proposal validation.
     if data["operation"] in {"update_rule", "archive_rule"}:
         counts = connection.execute(
             """SELECT
@@ -150,7 +162,7 @@ def submit_proposal(operation: str, payload: dict, target_id: str | None,
         if target_id is not None or expected_version is not None:
             raise QueueAdminError("Create proposal cannot name an existing rule.")
         required = {"title", "instructions"}
-        unknown = set(payload) - RULE_CREATE_DEFAULTS.keys() - required
+        unknown = set(payload) - RULE_CREATE_DEFAULTS.keys() - required - {"group"}
         missing = required - payload.keys()
         if unknown or missing:
             details = []
@@ -168,7 +180,7 @@ def submit_proposal(operation: str, payload: dict, target_id: str | None,
             raise QueueAdminError("Rule target and expected_version are required.")
         if operation == "update_rule":
             unknown = set(payload) - RULE_CREATE_DEFAULTS.keys() - {
-                "title", "instructions", "is_active"}
+                "title", "instructions", "is_active", "group"}
             if unknown:
                 raise QueueAdminError("Unknown update fields: " + ", ".join(sorted(unknown)))
             if not payload:

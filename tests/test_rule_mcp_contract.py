@@ -107,6 +107,41 @@ class RuleMcpContractTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(switched["timezone"])
             self.assertIs(switched["is_active"], False)
 
+    async def test_group_and_archive_catalog_contract(self):
+        async with Client(mcp_server.mcp) as client:
+            result = await client.call_tool("propose_create_task_rule", {
+                "rule": {"title": "Grouped", "instructions": "Run", "group": " News "},
+                "idempotency_key": "group-create"})
+            created = proposals.decide_proposal(result.structured_content["id"], True, "reviewer")
+            self.assertEqual(created["status"], "approved")
+            rule_id = created["result"]["id"]
+            before = admin.get_definition(rule_id)["definition"]
+            self.assertEqual(before["group"], "News")
+            edit = await client.call_tool("propose_update_task_rule", {
+                "rule_id": rule_id, "changes": {"group": None},
+                "expected_version": before["version"], "idempotency_key": "group-clear"})
+            self.assertTrue(edit.structured_content["impact"]["metadata_only"])
+            self.assertEqual(proposals.decide_proposal(edit.structured_content["id"], True,
+                "reviewer")["status"], "approved")
+            after = admin.get_definition(rule_id)["definition"]
+            self.assertIsNone(after["group"])
+            self.assertEqual(after["execution_version"], before["execution_version"])
+            archived = admin.create_definition("AAA", "Run", priority=9)
+            admin.archive_definition(archived)
+            paused = admin.create_definition("Paused", "Run")
+            admin.update_definition(paused, {"is_active": False})
+            async def listed(**kwargs):
+                response = await client.call_tool("list_task_rules", kwargs)
+                return response.structured_content["rules"]
+            self.assertEqual({row["id"] for row in await listed()}, {rule_id, paused})
+            self.assertNotEqual((await listed(limit=1))[0]["id"], archived)
+            self.assertEqual({row["id"] for row in await listed(is_active=False)}, {paused})
+            self.assertEqual({row["id"] for row in await listed(is_active=False, include_archived=True)},
+                             {paused, archived})
+            self.assertEqual((await listed(include_archived=True, limit=1))[0]["id"], archived)
+            self.assertIn("group", (await listed())[0])
+            self.assertIsNotNone(admin.get_definition(archived)["definition"]["archived_at"])
+
     async def test_legacy_aliases_same_proposal_and_conflicts(self):
         async with Client(mcp_server.mcp) as client:
             common = dict(title="Daily", instructions="Run", schedule_kind="daily",

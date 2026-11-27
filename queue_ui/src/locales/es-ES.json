@@ -147,5 +147,14 @@
   "Available to agents now:": "Disponibles para los agentes ahora:",
   "Total rules:": "Total de reglas:",
   "No tasks ready right now.": "Ahora mismo no hay tareas listas.",
-  "Activity": "Actividad"
+  "Activity": "Actividad",
+  "Group": "Grupo",
+  "Ungrouped": "Sin grupo",
+  "Expand all": "Expandir todo",
+  "Collapse all": "Contraer todo",
+  "Show archived": "Mostrar archivadas",
+  "Expand group": "Expandir grupo",
+  "Collapse group": "Contraer grupo",
+  "Optional organization only; does not affect execution.": "Organización opcional; no afecta a la ejecución.",
+  "Updates organization only; scheduled tasks are unchanged.": "Solo cambia la organización; las tareas programadas no cambian."
 }

@@ -49,10 +49,12 @@ async def report_task_result(task_id: str, lease_token: str, status: str,
     return await asyncio.to_thread(service.report_task_result, task_id, lease_token, status, result, error)
 
 
-async def list_task_rules(is_active: bool | None = None, limit: int = 50, offset: int = 0) -> dict:
-    """List task rule metadata only. Use get_task_rule for full instructions."""
+async def list_task_rules(is_active: bool | None = None, limit: int = 50, offset: int = 0,
+                          include_archived: bool = False) -> dict:
+    """List rule metadata, excluding archived rules by default. Set include_archived=true to include them; is_active remains an independent filter. Use get_task_rule for full instructions."""
     _page(limit, offset)
-    rows = await asyncio.to_thread(admin.list_definition_summaries, is_active, limit, offset)
+    rows = await asyncio.to_thread(admin.list_definition_summaries, is_active, limit, offset,
+                                   include_archived=include_archived)
     for row in rows:
         row["is_active"] = bool(row["is_active"])
     return {"rules": rows}
@@ -107,7 +109,7 @@ async def propose_update_task_rule(rule_id: str, changes: RuleChanges,
                                    idempotency_key: IdempotencyKey) -> dict:
     """Edit a scheduled task or pause/resume it (is_active=false/true), subject to approval.
     Read get_task_rule first; pass its definition.version as expected_version.
-    Only supplied fields change; null clears nullable timing fields. When changing schedule
+    Only supplied fields change; null clears group or nullable timing fields. When changing schedule
     kind, clear incompatible old timing fields with null and supply the new timing fields.
     Use a new idempotency key per distinct edit. Check returned proposal status.
     """

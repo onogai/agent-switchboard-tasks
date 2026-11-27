@@ -21,6 +21,8 @@ Instructions = Annotated[str, Field(min_length=1, max_length=100_000,
 class RuleFields(TypedDict, total=False):
     """Common optional settings. No values are inserted by input validation."""
 
+    group: Annotated[str | None, Field(max_length=200,
+        description="Optional organizational group; null or blank clears it. Does not affect execution.")]
     schedule_kind: Annotated[Literal["manual", "interval", "daily", "one_shot"], Field(
         description="daily: daily_time_local and timezone; interval: interval_minutes; "
         "one_shot: one_shot_at (stored as manual); manual: no recurring timing.")]
@@ -58,6 +60,7 @@ class RuleFields(TypedDict, total=False):
 def _describe_create_defaults(schema: dict) -> None:
     # JSON Schema defaults are documentation only. The proposal service inserts
     # them after resolving legacy aliases, so omitted values cannot conflict.
+    schema["properties"]["group"]["default"] = None
     for name, value in RULE_CREATE_DEFAULTS.items():
         public_name = "timezone" if name == "timezone_name" else name
         schema["properties"][public_name]["default"] = value
@@ -73,7 +76,7 @@ class CreateRule(RuleFields):
 
 
 class RuleChanges(RuleFields, total=False):
-    """Partial edit: omitted fields stay unchanged; null clears nullable timing fields only."""
+    """Partial edit: omitted fields stay unchanged; null clears group or nullable timing fields."""
 
     __pydantic_config__ = ConfigDict(extra="forbid", strict=True,
                                      json_schema_extra={"minProperties": 1})

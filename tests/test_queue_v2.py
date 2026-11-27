@@ -172,6 +172,39 @@ class QueueV2Tests(unittest.TestCase):
                         and row["status"] == "future")
         self.assertEqual(next_run["coverage_start"], source["coverage_start"])
 
+    def test_group_only_preserves_all_instances_even_after_startup(self):
+        rule = create_definition("Grouped", "Run", schedule_kind="interval",
+            interval_minutes=10, interval_anchor_at=stamp(NOW), db_path=self.path, now=NOW)
+        claim_next_task(self.path, NOW)
+        trigger_definition(rule, self.path, NOW)
+        def snapshot():
+            with open_queue_db(self.path) as db:
+                return [dict(row) for row in db.execute(
+                    "SELECT * FROM task_instances ORDER BY id")]
+        before = snapshot()
+        old = get_definition(rule, self.path)["definition"]
+        update_definition(rule, {"group": "  Reports  ", "title": old["title"]},
+                          self.path, NOW + timedelta(seconds=1), old["version"])
+        changed = get_definition(rule, self.path)["definition"]
+        self.assertEqual(changed["group"], "Reports")
+        self.assertEqual(changed["version"], old["version"] + 1)
+        self.assertEqual(changed["execution_version"], old["execution_version"])
+        self.assertEqual(changed["next_scheduled_at"], old["next_scheduled_at"])
+        self.assertEqual(changed["pending_coverage_start"], old["pending_coverage_start"])
+        self.assertEqual(before, snapshot())
+        refresh_pending_snapshots(self.path, NOW + timedelta(seconds=2))
+        self.assertEqual(before, snapshot())
+        with self.assertRaisesRegex(QueueAdminError, "version conflict"):
+            update_definition(rule, {"group": "Stale"}, self.path, NOW, old["version"])
+        update_definition(rule, {"group": None, "instructions": "New"},
+                          self.path, NOW + timedelta(seconds=3), changed["version"])
+        mixed = get_definition(rule, self.path)["definition"]
+        self.assertIsNone(mixed["group"])
+        self.assertEqual(mixed["version"], mixed["execution_version"])
+        self.assertTrue(any(row["instructions_snapshot"] == "New" for row in snapshot()))
+        self.assertTrue(any(row["status"] == "leased" and row["instructions_snapshot"] == "Run"
+                            for row in snapshot()))
+
     def test_startup_refresh_repairs_stale_pending_snapshots_idempotently(self):
         rule = create_definition("Original", "Old", schedule_kind="interval",
             interval_minutes=10, interval_anchor_at=stamp(NOW),
@@ -180,7 +213,7 @@ class QueueV2Tests(unittest.TestCase):
         manual = trigger_definition(rule, self.path, NOW)
         # Simulate the old database: rule changed without refreshing its instances.
         with open_queue_db(self.path) as db, transaction(db):
-            db.execute("""UPDATE task_definitions SET version=9,title='Current',
+            db.execute("""UPDATE task_definitions SET version=9,execution_version=9,title='Current',
                 instructions='New',priority=8,lease_seconds=120,max_attempts=4,
                 window_before_minutes=15 WHERE id=?""", (rule,))
         before = {row["id"]: row for row in self.rows(rule)}
@@ -416,6 +449,29 @@ class QueueV2Tests(unittest.TestCase):
         self.assertEqual(len([row for row in list_definitions(self.path)
                               if row["title"] == "Single"]), 1)
 
+    def test_v2_migration_preserves_noninitial_rule_versions_and_pending_proposals(self):
+        rule = create_definition("Existing", "Run", db_path=self.path, now=NOW)
+        update_definition(rule, {"instructions": "New"}, self.path, NOW)
+        trigger_definition(rule, self.path, NOW)
+        old = get_definition(rule, self.path)["definition"]
+        proposal = submit_proposal("update_rule", {"title": "New title"}, rule,
+                                   old["version"], "agent", "pre-migration", self.path, NOW)
+        # Reconstruct the exact pre-v3 columns without touching history.
+        with sqlite3.connect(self.path) as db:
+            db.execute('ALTER TABLE task_definitions DROP COLUMN "group"')
+            db.execute("ALTER TABLE task_definitions DROP COLUMN execution_version")
+            db.execute("PRAGMA user_version=2")
+            before = db.execute("SELECT * FROM task_instances ORDER BY id").fetchall()
+        migrated = get_definition(rule, self.path)["definition"]
+        self.assertEqual(migrated["version"], old["version"])
+        self.assertEqual(migrated["execution_version"], old["version"])
+        self.assertIsNone(migrated["group"])
+        refresh_pending_snapshots(self.path, NOW)
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(before, db.execute(
+                "SELECT * FROM task_instances ORDER BY id").fetchall())
+        self.assertEqual(get_proposal(proposal["id"], self.path)["status"], "pending")
+
     def test_v1_migration_preserves_history_and_is_repeatable(self):
         connection = sqlite3.connect(self.path, isolation_level=None)
         try:
@@ -434,11 +490,11 @@ class QueueV2Tests(unittest.TestCase):
         finally:
             connection.close()
         with open_queue_db(self.path) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
             self.assertEqual(db.execute("SELECT status FROM task_instances WHERE id='done'").fetchone()[0],
                              "succeeded")
         with open_queue_db(self.path) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM task_instances").fetchone()[0], 1)
 
 
