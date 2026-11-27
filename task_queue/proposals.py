@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from .admin import (QueueAdminError, _settings, apply_archive, apply_cancel,
                     apply_create, apply_retry, apply_trigger, apply_update,
-                    normalize_group, _updated_settings, _execution_changed)
+                    normalize_group, _updated_settings, _execution_changed, _schedule_changed)
 from .db import open_queue_db, transaction
 from .models import RULE_CREATE_DEFAULTS
 from .scheduler import parse, stamp, utc
@@ -337,7 +337,8 @@ def _review_presentation(connection: sqlite3.Connection, data: dict) -> dict:
               "max_attempts": "maximum attempts"}
     impact = data["impact"] or {}
     if operation == "create_rule":
-        summary = "Create rule: " + short(payload.get("schedule_kind", "manual")) + " schedule."
+        kind = "one-shot" if payload.get("one_shot_at") else payload.get("schedule_kind", "manual")
+        summary = "Create rule: " + short(kind) + " schedule."
         if payload.get("daily_time_local"):
             summary += " Daily at " + short(payload["daily_time_local"]) + "."
         if payload.get("interval_minutes"):
@@ -348,28 +349,44 @@ def _review_presentation(connection: sqlite3.Connection, data: dict) -> dict:
             summary += " Time zone: " + short(payload["timezone_name"]) + "."
         effect = "Creates a rule and its current scheduled runs."
     elif operation == "update_rule":
+        settings, active = None, None
+        if rule is not None and rule["archived_at"] is None:
+            try:
+                settings, active = _updated_settings(rule, payload, datetime.now(timezone.utc))
+            except QueueAdminError:
+                pass
         changes = []
-        for key, value in payload.items():
-            label = labels.get(key, key)
-            if key == "instructions":
-                changes.append("update instructions")
-            elif key == "is_active":
-                changes.append("enable rule" if value else "pause rule")
-            else:
-                column = "timezone" if key == "timezone_name" else key
-                old = rule[column] if rule and column in rule.keys() else None
-                if rule is not None and column in rule.keys() and old != value:
-                    changes.append(label + ": " + short(old) + " → " + short(value))
+        if settings is not None:
+            for column, value in settings.items():
+                old = rule[column]
+                if old == value:
+                    continue
+                label = labels.get("timezone_name" if column == "timezone" else column, column)
+                if column == "instructions":
+                    changes.append("update instructions")
                 else:
-                    changes.append(label + ": " + short(value))
-        summary = "; ".join(changes) + "."
-        if impact.get("metadata_only"):
-            effect = "Updates organization only; scheduled tasks are unchanged."
-        elif payload.get("is_active") is False:
+                    changes.append(label + ": " + short(old) + " → " + short(value))
+            if active != bool(rule["is_active"]):
+                changes.append("enable rule" if active else "pause rule")
+        else:
+            changes = [labels.get(key, key) for key in payload]
+        summary = "; ".join(changes) + "." if changes else "No effective changes."
+        if rule is None or rule["archived_at"] is not None:
+            effect = "Rule no longer available; approval may be stale."
+        elif rule["version"] != data["expected_version"]:
+            effect = "Rule version conflict; approval will be stale."
+        elif settings is None:
+            effect = "Proposed settings are no longer valid."
+        elif not _execution_changed(rule, settings, active):
+            effect = ("Updates organization only; scheduled tasks are unchanged."
+                      if settings["group"] != rule["group"] else
+                      "No effective rule changes; approval will be stale.")
+        elif not active and bool(rule["is_active"]):
             effect = (f"Pausing will cancel {impact.get('unstarted', 0)} unleased automatic runs "
                       f"and {impact.get('queued_retries', 0)} pending automatic retries.")
-        elif {"schedule_kind", "interval_minutes", "interval_anchor_at", "daily_time_local",
-              "timezone_name", "one_shot_at"} & payload.keys():
+        elif active and not bool(rule["is_active"]):
+            effect = "Enables the rule and generates eligible scheduled runs."
+        elif _schedule_changed(rule, settings):
             effect = (f"Rebuilds up to {impact.get('unstarted', 0)} automatic runs without attempts; "
                       "active leases remain.")
         else:
