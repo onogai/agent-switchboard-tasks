@@ -438,7 +438,7 @@ def apply_archive(connection: sqlite3.Connection, rule_id: str, now: datetime,
     _cancel_unleased(connection, rule_id, now, "rule_archived", False)
     connection.execute(
         """UPDATE task_definitions SET is_active=0,archived_at=?,next_scheduled_at=NULL,
-           pending_coverage_start=NULL,version=version+1,updated_at=? WHERE id=?""",
+           pending_coverage_start=NULL,execution_version=version+1,version=version+1,updated_at=? WHERE id=?""",
         (stamp(now), stamp(now), rule_id),
     )
     event(connection, "definition", rule_id, "archived", now, actor="admin")

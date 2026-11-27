@@ -174,6 +174,8 @@ def migrate(legacy_env: Path, addon_root: Path, *,
     source = staged_db if reverse else legacy_db
     target = legacy_db if reverse else staged_db
     original = snapshot(source)
+    if reverse and original["version"] >= 3:
+        raise MigrationError("Legacy schema v2 runtime cannot open schema v3; restore a compatible managed backup instead.")
     if source.resolve() == target.resolve():
         raise MigrationError("Source and destination are the same database")
     if target.exists():

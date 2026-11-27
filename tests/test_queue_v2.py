@@ -449,6 +449,29 @@ class QueueV2Tests(unittest.TestCase):
         self.assertEqual(len([row for row in list_definitions(self.path)
                               if row["title"] == "Single"]), 1)
 
+    def test_v2_migration_preserves_noninitial_rule_versions_and_pending_proposals(self):
+        rule = create_definition("Existing", "Run", db_path=self.path, now=NOW)
+        update_definition(rule, {"instructions": "New"}, self.path, NOW)
+        trigger_definition(rule, self.path, NOW)
+        old = get_definition(rule, self.path)["definition"]
+        proposal = submit_proposal("update_rule", {"title": "New title"}, rule,
+                                   old["version"], "agent", "pre-migration", self.path, NOW)
+        # Reconstruct the exact pre-v3 columns without touching history.
+        with sqlite3.connect(self.path) as db:
+            db.execute('ALTER TABLE task_definitions DROP COLUMN "group"')
+            db.execute("ALTER TABLE task_definitions DROP COLUMN execution_version")
+            db.execute("PRAGMA user_version=2")
+            before = db.execute("SELECT * FROM task_instances ORDER BY id").fetchall()
+        migrated = get_definition(rule, self.path)["definition"]
+        self.assertEqual(migrated["version"], old["version"])
+        self.assertEqual(migrated["execution_version"], old["version"])
+        self.assertIsNone(migrated["group"])
+        refresh_pending_snapshots(self.path, NOW)
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(before, db.execute(
+                "SELECT * FROM task_instances ORDER BY id").fetchall())
+        self.assertEqual(get_proposal(proposal["id"], self.path)["status"], "pending")
+
     def test_v1_migration_preserves_history_and_is_repeatable(self):
         connection = sqlite3.connect(self.path, isolation_level=None)
         try:

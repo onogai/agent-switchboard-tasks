@@ -136,6 +136,8 @@ have been verified.
 
 ## 4. Rollback without losing newer task history
 
+**Schema v3 or later:** the legacy schema-v2 runtime cannot open the updated database. The reverse-copy helper refuses this downgrade. Use the managed add-on safe-state backup/restore procedure instead; review post-backup task history and external side effects before restoring.
+
 An endpoint-only rollback would lose work completed after the database
 migration. Stop both Queue containers first. Use the same helper with
 --reverse to preview and then copy the latest add-on database back to

@@ -105,6 +105,12 @@ class QueueMigrationTests(unittest.TestCase):
             0,
         )
 
+    def test_refuses_reverse_copy_of_schema_v3_into_legacy_runtime(self):
+        with sqlite3.connect(self.addon / "state" / "data" / "queue.sqlite3") as db:
+            db.execute("PRAGMA user_version=3")
+        with self.assertRaisesRegex(MigrationError, "Legacy schema v2 runtime"):
+            migrate(self.old_env, self.addon, reverse=True)
+
     def test_refuses_wrong_schema_and_secret(self):
         with sqlite3.connect(self.legacy / "queue.sqlite3") as db:
             db.execute("PRAGMA user_version=4")
